@@ -241,7 +241,7 @@ export class EvaluationService {
   private storageServiceUrl() {
     return this.configService.get<string>(
       'STORAGE_SERVICE_URL',
-      'http://storage-service:3004',
+      'http://storage-service:8004',
     );
   }
 

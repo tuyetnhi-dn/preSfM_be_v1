@@ -323,4 +323,23 @@ export class GatewayController {
       method: 'GET',
     });
   }
+
+  @Get('masks/health')
+  maskHealth() {
+    return this.gatewayService.jsonRequest({
+      service: 'mask',
+      path: '/masks/health',
+      method: 'GET',
+    });
+  }
+
+  @Post('masks/generate')
+  generateMasks(@Body() body: unknown) {
+    return this.gatewayService.jsonRequest({
+      service: 'mask',
+      path: '/masks/generate',
+      method: 'POST',
+      body,
+    });
+  }
 }

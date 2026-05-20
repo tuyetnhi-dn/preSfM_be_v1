@@ -11,7 +11,14 @@ export class EvaluationController {
   }
 
   @Post('compare')
-  compare(@Body() body: { pipelineRunId?: string; rawOpenSfmRunId?: string; processedOpenSfmRunId?: string }) {
+  compare(
+    @Body()
+    body: {
+      pipelineRunId?: string;
+      rawOpenSfmRunId?: string;
+      processedOpenSfmRunId?: string;
+    },
+  ) {
     return this.evaluationService.compare(body);
   }
 

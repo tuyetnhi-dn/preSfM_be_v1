@@ -1,7 +1,13 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-type ServiceKey = 'auth' | 'video' | 'storage' | 'opensfm' | 'evaluation';
+type ServiceKey =
+  | 'auth'
+  | 'video'
+  | 'storage'
+  | 'opensfm'
+  | 'evaluation'
+  | 'mask';
 
 @Injectable()
 export class GatewayService {
@@ -9,11 +15,12 @@ export class GatewayService {
 
   serviceUrl(key: ServiceKey) {
     const defaults: Record<ServiceKey, string> = {
-      auth: 'http://auth-service:3001',
-      video: 'http://video-service:3003',
-      storage: 'http://storage-service:3004',
-      opensfm: 'http://opensfm-service:3005',
-      evaluation: 'http://evaluation-service:3006',
+      auth: 'http://auth-service:8001',
+      mask: 'http://segmentation-service:8002',
+      video: 'http://video-service:8003',
+      storage: 'http://storage-service:8004',
+      opensfm: 'http://opensfm-service:8005',
+      evaluation: 'http://evaluation-service:8006',
     };
     const envKey = `${key.toUpperCase()}_SERVICE_URL`;
     return this.configService

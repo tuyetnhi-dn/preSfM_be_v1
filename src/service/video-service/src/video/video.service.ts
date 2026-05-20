@@ -1,7 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
+import { CreatePipelineBody, PipelineType } from '../type/pipline.type';
 
 type UploadBody = {
   datasetId?: string;
@@ -18,6 +23,13 @@ type StorageUploadResponse = {
   sizeBytes: number;
 };
 
+type DatasetRow = {
+  id: string;
+  project_id: string;
+  name: string;
+  status: string;
+};
+
 @Injectable()
 export class VideoService {
   constructor(
@@ -25,35 +37,87 @@ export class VideoService {
     private readonly configService: ConfigService,
   ) {}
 
+  // ─── Auto-create helpers ──────────────────────────────────────────────────
+
+  private async createProject(
+    userId?: string,
+  ): Promise<{ id: string; name: string }> {
+    if (!userId) {
+      throw new BadRequestException(
+        'uploadedBy is required — must be a valid user UUID',
+      );
+    }
+
+    const name = `Project ${new Date().toISOString().slice(0, 10)} ${randomUUID().slice(0, 6)}`;
+
+    const result = await this.databaseService.query(
+      `INSERT INTO projects(user_id, name, status)
+     VALUES ($1, $2, 'active')
+     RETURNING id, name`,
+      [userId, name],
+    );
+
+    return result.rows[0] as { id: string; name: string };
+  }
+
+  private async createDataset(userId?: string): Promise<DatasetRow> {
+    const project = await this.createProject(userId);
+
+    const name = `Dataset ${new Date().toISOString().slice(0, 10)}`;
+
+    const result = await this.databaseService.query(
+      `INSERT INTO datasets(project_id, name, status,
+                          raw_frame_count, selected_frame_count,
+                          rejected_frame_count, mask_count)
+     VALUES ($1, $2, 'created', 0, 0, 0, 0)
+     RETURNING id, project_id, name, status`,
+      [project.id, name],
+    );
+
+    return result.rows[0] as DatasetRow;
+  }
+
+  // ─── Public API ───────────────────────────────────────────────────────────
+
   async upload(file: Express.Multer.File, body: UploadBody) {
     if (!file) {
       throw new BadRequestException('Video file is required');
     }
-    if (!body.datasetId) {
-      throw new BadRequestException('datasetId is required');
-    }
     if (!this.isAllowedVideo(file.mimetype, file.originalname)) {
       throw new BadRequestException('Unsupported video format');
     }
-    const dataset = await this.getDataset(body.datasetId);
+
+    const dataset = body.datasetId
+      ? await this.getDataset(body.datasetId)
+      : await this.createDataset(body.uploadedBy);
+
     const extension = this.fileExtension(file.originalname);
-    const objectPath = `projects/${dataset.project_id}/datasets/${body.datasetId}/videos/${randomUUID()}${extension}`;
+    const objectPath = `projects/${dataset.project_id}/datasets/${dataset.id}/videos/${randomUUID()}${extension}`;
+
     const storageFile = await this.uploadToStorage(file, {
       bucket: this.configService.get<string>('VIDEO_BUCKET', 'videos'),
       path: objectPath,
       uploadedBy: body.uploadedBy,
       projectId: dataset.project_id,
-      datasetId: body.datasetId,
+      datasetId: dataset.id,
     });
+
     const result = await this.databaseService.query(
       `INSERT INTO videos(dataset_id, storage_file_id, original_name, mime_type, size_bytes, status)
        VALUES ($1, $2, $3, $4, $5, 'uploaded')
        RETURNING id, dataset_id, storage_file_id, original_name, mime_type, size_bytes, status, created_at`,
-      [body.datasetId, storageFile.id, file.originalname, file.mimetype, file.size],
+      [dataset.id, storageFile.id, file.originalname, file.mimetype, file.size],
     );
-    await this.databaseService.query(`UPDATE datasets SET status = 'ready' WHERE id = $1`, [body.datasetId]);
+
+    await this.databaseService.query(
+      `UPDATE datasets SET status = 'ready' WHERE id = $1`,
+      [dataset.id],
+    );
+
     return {
       ...this.mapVideo(result.rows[0]),
+      projectId: dataset.project_id,
+      datasetId: dataset.id,
       storageFile,
     };
   }
@@ -61,20 +125,21 @@ export class VideoService {
   async list(datasetId?: string) {
     const result = datasetId
       ? await this.databaseService.query(
-        `SELECT v.*, sf.bucket, sf.object_path
-         FROM videos v
-         JOIN storage_files sf ON sf.id = v.storage_file_id
-         WHERE v.dataset_id = $1
-         ORDER BY v.created_at DESC`,
-        [datasetId],
-      )
+          `SELECT v.*, sf.bucket, sf.object_path
+           FROM videos v
+           JOIN storage_files sf ON sf.id = v.storage_file_id
+           WHERE v.dataset_id = $1
+           ORDER BY v.created_at DESC`,
+          [datasetId],
+        )
       : await this.databaseService.query(
-        `SELECT v.*, sf.bucket, sf.object_path
-         FROM videos v
-         JOIN storage_files sf ON sf.id = v.storage_file_id
-         ORDER BY v.created_at DESC
-         LIMIT 100`,
-      );
+          `SELECT v.*, sf.bucket, sf.object_path
+           FROM videos v
+           JOIN storage_files sf ON sf.id = v.storage_file_id
+           ORDER BY v.created_at DESC
+           LIMIT 100`,
+        );
+
     return result.rows.map((row) => this.mapVideo(row));
   }
 
@@ -106,30 +171,43 @@ export class VideoService {
     };
   }
 
-  async createFrameExtractionPipeline(id: string, body: { sampleFps?: number; config?: Record<string, unknown> }) {
+  async createFrameExtractionPipeline(id: string, body: CreatePipelineBody) {
     const video = await this.findById(id);
+
     const pipeline = await this.databaseService.query(
-      `INSERT INTO pipeline_runs(dataset_id, video_id, status, progress, config)
-       VALUES ($1, $2, 'pending', 0, $3::jsonb)
-       RETURNING id, dataset_id, video_id, status, progress, config, created_at`,
-      [video.datasetId, id, JSON.stringify({ sampleFps: body.sampleFps || 2, ...(body.config || {}) })],
+      `INSERT INTO pipeline_runs(dataset_id, video_id, status, progress, config, pipeline_type)
+       VALUES ($1, $2, 'pending', 0, $3::jsonb, $4)
+       RETURNING *`,
+      [
+        video.datasetId,
+        id,
+        JSON.stringify({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+          sampleFps: body.sampleFps ?? 2,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          ...(body.config ?? {}),
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        body.pipelineType,
+      ],
     );
-    const steps = [
-      ['frame_extract', 'Extract frames from video'],
-      ['opensfm_raw', 'Run OpenSfM with raw frames'],
-      ['preprocessing', 'Filter frames and create dynamic masks'],
-      ['opensfm_processed', 'Run OpenSfM with processed frames'],
-      ['evaluation', 'Compare raw and processed point clouds'],
-    ];
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
+    const steps = this.getStepsForPipeline(body.pipelineType);
+
     for (const [key, name] of steps) {
       await this.databaseService.query(
         `INSERT INTO pipeline_steps(pipeline_run_id, step_key, step_name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT(pipeline_run_id, step_key) DO NOTHING`,
+         VALUES ($1, $2, $3) ON CONFLICT(pipeline_run_id, step_key) DO NOTHING`,
         [pipeline.rows[0].id, key, name],
       );
     }
-    await this.databaseService.query(`UPDATE videos SET status = 'frame_extracting' WHERE id = $1`, [id]);
+
+    await this.databaseService.query(
+      `UPDATE videos SET status = 'frame_extracting' WHERE id = $1`,
+      [id],
+    );
+
     return pipeline.rows[0];
   }
 
@@ -139,7 +217,9 @@ export class VideoService {
     return { success: true, deletedVideoId: video.id };
   }
 
-  private async getDataset(datasetId: string) {
+  // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async getDataset(datasetId: string): Promise<DatasetRow> {
     const result = await this.databaseService.query(
       `SELECT id, project_id, status FROM datasets WHERE id = $1`,
       [datasetId],
@@ -148,17 +228,31 @@ export class VideoService {
     if (!dataset) {
       throw new NotFoundException('Dataset not found');
     }
-    return dataset;
+    return dataset as DatasetRow;
   }
 
-  private async uploadToStorage(file: Express.Multer.File, input: { bucket: string; path: string; uploadedBy?: string; projectId?: string; datasetId?: string }) {
+  private async uploadToStorage(
+    file: Express.Multer.File,
+    input: {
+      bucket: string;
+      path: string;
+      uploadedBy?: string;
+      projectId?: string;
+      datasetId?: string;
+    },
+  ) {
     const formData = new FormData();
-    formData.append('file', new Blob([file.buffer as unknown as BlobPart], { type: file.mimetype }), file.originalname);
+    formData.append(
+      'file',
+      new Blob([file.buffer as unknown as BlobPart], { type: file.mimetype }),
+      file.originalname,
+    );
     formData.append('bucket', input.bucket);
     formData.append('path', input.path);
     if (input.uploadedBy) formData.append('uploadedBy', input.uploadedBy);
     if (input.projectId) formData.append('projectId', input.projectId);
     if (input.datasetId) formData.append('datasetId', input.datasetId);
+
     const response = await fetch(`${this.storageServiceUrl()}/storage/upload`, {
       method: 'POST',
       body: formData,
@@ -166,16 +260,47 @@ export class VideoService {
     if (!response.ok) {
       throw new BadRequestException(await response.text());
     }
-    return await response.json() as StorageUploadResponse;
+    return (await response.json()) as StorageUploadResponse;
   }
 
   private storageServiceUrl() {
-    return this.configService.get<string>('STORAGE_SERVICE_URL', 'http://storage-service:3004');
+    return this.configService.get<string>(
+      'STORAGE_SERVICE_URL',
+      'http://storage-service:8004',
+    );
+  }
+
+  private getStepsForPipeline(type: PipelineType): [string, string][] {
+    const shared: [string, string][] = [
+      ['frame_extract', 'Extract frames from video'],
+    ];
+
+    if (type === 'raw') {
+      return [
+        ...shared,
+        ['opensfm_raw', 'Run OpenSfM with raw frames'],
+        ['evaluation', 'Compare raw point cloud'],
+      ];
+    }
+
+    return [
+      ...shared,
+      ['preprocessing', 'Filter noisy frames'],
+      ['mask_generation', 'Generate dynamic masks via AI model'],
+      ['opensfm_processed', 'Run OpenSfM with filtered frames + masks'],
+      ['evaluation', 'Compare raw and processed point clouds'],
+    ];
   }
 
   private isAllowedVideo(mimeType: string, filename: string) {
     const lower = filename.toLowerCase();
-    return mimeType.startsWith('video/') || lower.endsWith('.mp4') || lower.endsWith('.mov') || lower.endsWith('.avi') || lower.endsWith('.mkv');
+    return (
+      mimeType.startsWith('video/') ||
+      lower.endsWith('.mp4') ||
+      lower.endsWith('.mov') ||
+      lower.endsWith('.avi') ||
+      lower.endsWith('.mkv')
+    );
   }
 
   private fileExtension(filename: string) {
