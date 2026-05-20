@@ -1,27 +1,8 @@
+#docker compose up -d --build
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: presfm-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-    ports:
-      - "5432:5432"
-    volumes:
-      - presfm-postgres-data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-presfm} -d ${POSTGRES_DB:-presfm}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - presfm-network
-
   gateway-service:
     build:
-      context: ./services/gateway-service
+      context: ./src/service/gateway-service
     container_name: presfm-gateway-service
     environment:
       PORT: 3000
@@ -31,7 +12,7 @@ services:
       OPENSFM_SERVICE_URL: http://opensfm-service:3005
       EVALUATION_SERVICE_URL: http://evaluation-service:3006
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       auth-service:
         condition: service_started
@@ -48,72 +29,72 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service
+      context: ./src/service/auth-service
     container_name: presfm-auth-service
     environment:
+      NODE_OPTIONS: --dns-result-order=ipv4first
       PORT: 3001
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-      POSTGRES_SSL: "false"
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-replace_with_secure_access_secret}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSL: ${POSTGRES_SSL}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_ACCESS_EXPIRES_SECONDS: ${JWT_ACCESS_EXPIRES_SECONDS:-900}
       JWT_REFRESH_EXPIRES_DAYS: ${JWT_REFRESH_EXPIRES_DAYS:-7}
+      # ── SMTP ──────────────────────────────
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      OTP_EXPIRES_MINUTES: ${OTP_EXPIRES_MINUTES:-10}
     ports:
-      - "3001:3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - '3001:3001'
     networks:
       - presfm-network
 
   storage-service:
     build:
-      context: ./services/storage-service
+      context: ./src/service/storage-service
     container_name: presfm-storage-service
     environment:
       PORT: 3004
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-      POSTGRES_SSL: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSL: ${POSTGRES_SSL}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       SUPABASE_DEFAULT_BUCKET: ${SUPABASE_DEFAULT_BUCKET:-presfm}
       LOCAL_STORAGE_ROOT: /data/presfm-storage
     ports:
-      - "3004:3004"
+      - '3004:3004'
     volumes:
       - presfm-storage-data:/data/presfm-storage
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - presfm-network
 
   video-service:
     build:
-      context: ./services/video-service
+      context: ./src/service/video-service
     container_name: presfm-video-service
     environment:
       PORT: 3003
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-      POSTGRES_SSL: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSL: ${POSTGRES_SSL}
       STORAGE_SERVICE_URL: http://storage-service:3004
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
     ports:
-      - "3003:3003"
+      - '3003:3003'
     depends_on:
-      postgres:
-        condition: service_healthy
       storage-service:
         condition: service_started
     networks:
@@ -121,50 +102,44 @@ services:
 
   opensfm-service:
     build:
-      context: ./services/opensfm-service
+      context: ./src/service/opensfm-service
     container_name: presfm-opensfm-service
     environment:
       PORT: 3005
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-      POSTGRES_SSL: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSL: ${POSTGRES_SSL}
       OPENSFM_WORKER_URL: ${OPENSFM_WORKER_URL:-}
     ports:
-      - "3005:3005"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - '3005:3005'
     networks:
       - presfm-network
 
   evaluation-service:
     build:
-      context: ./services/evaluation-service
+      context: ./src/service/evaluation-service
     container_name: presfm-evaluation-service
     environment:
       PORT: 3006
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-presfm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presfm}
-      POSTGRES_DB: ${POSTGRES_DB:-presfm}
-      POSTGRES_SSL: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSL: ${POSTGRES_SSL}
       STORAGE_SERVICE_URL: http://storage-service:3004
     ports:
-      - "3006:3006"
+      - '3006:3006'
     depends_on:
-      postgres:
-        condition: service_healthy
       storage-service:
         condition: service_started
     networks:
       - presfm-network
 
 volumes:
-  presfm-postgres-data:
   presfm-storage-data:
 
 networks:

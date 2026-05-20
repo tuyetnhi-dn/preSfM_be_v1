@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../common/database/database.service';
 
@@ -30,16 +34,33 @@ export class EvaluationService {
   ) {}
 
   async compare(body: CompareBody) {
-    if (!body.pipelineRunId || !body.rawOpenSfmRunId || !body.processedOpenSfmRunId) {
-      throw new BadRequestException('pipelineRunId, rawOpenSfmRunId and processedOpenSfmRunId are required');
+    if (
+      !body.pipelineRunId ||
+      !body.rawOpenSfmRunId ||
+      !body.processedOpenSfmRunId
+    ) {
+      throw new BadRequestException(
+        'pipelineRunId, rawOpenSfmRunId and processedOpenSfmRunId are required',
+      );
     }
     const rawRun = await this.getOpenSfmRun(body.rawOpenSfmRunId, 'raw');
-    const processedRun = await this.getOpenSfmRun(body.processedOpenSfmRunId, 'processed');
-    if (rawRun.pipeline_run_id !== body.pipelineRunId || processedRun.pipeline_run_id !== body.pipelineRunId) {
-      throw new BadRequestException('OpenSfM runs must belong to the same pipelineRunId');
+    const processedRun = await this.getOpenSfmRun(
+      body.processedOpenSfmRunId,
+      'processed',
+    );
+    if (
+      rawRun.pipeline_run_id !== body.pipelineRunId ||
+      processedRun.pipeline_run_id !== body.pipelineRunId
+    ) {
+      throw new BadRequestException(
+        'OpenSfM runs must belong to the same pipelineRunId',
+      );
     }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const rawFileId = rawRun.dense_ply_file_id || rawRun.sparse_ply_file_id;
-    const processedFileId = processedRun.dense_ply_file_id || processedRun.sparse_ply_file_id;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const processedFileId =
+      processedRun.dense_ply_file_id || processedRun.sparse_ply_file_id;
     if (!rawFileId || !processedFileId) {
       throw new BadRequestException('Both OpenSfM runs must have a PLY output');
     }
@@ -47,12 +68,29 @@ export class EvaluationService {
     const processedBuffer = await this.downloadStorageFile(processedFileId);
     const rawPly = this.parsePly(rawBuffer);
     const processedPly = this.parsePly(processedBuffer);
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const rawMetrics = rawRun.metrics || {};
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const processedMetrics = processedRun.metrics || {};
-    const rawReprojectionError = this.pickNumber(rawMetrics, ['reprojectionError', 'average_reprojection_error', 'reprojection_error']);
-    const processedReprojectionError = this.pickNumber(processedMetrics, ['reprojectionError', 'average_reprojection_error', 'reprojection_error']);
-    const rawImagesRatio = this.pickNumber(rawMetrics, ['reconstructedImagesRatio', 'reconstructed_images_ratio']);
-    const processedImagesRatio = this.pickNumber(processedMetrics, ['reconstructedImagesRatio', 'reconstructed_images_ratio']);
+    const rawReprojectionError = this.pickNumber(rawMetrics, [
+      'reprojectionError',
+      'average_reprojection_error',
+      'reprojection_error',
+    ]);
+    const processedReprojectionError = this.pickNumber(processedMetrics, [
+      'reprojectionError',
+      'average_reprojection_error',
+      'reprojection_error',
+    ]);
+    const rawImagesRatio = this.pickNumber(rawMetrics, [
+      'reconstructedImagesRatio',
+      'reconstructed_images_ratio',
+    ]);
+    const processedImagesRatio = this.pickNumber(processedMetrics, [
+      'reconstructedImagesRatio',
+      'reconstructed_images_ratio',
+    ]);
     const qualityScore = this.calculateQualityScore({
       rawPointCount: rawPly.pointCount,
       processedPointCount: processedPly.pointCount,
@@ -61,19 +99,30 @@ export class EvaluationService {
       rawImagesRatio,
       processedImagesRatio,
     });
-    const conclusion = this.buildConclusion(qualityScore, rawPly.pointCount, processedPly.pointCount, rawReprojectionError, processedReprojectionError);
+    const conclusion = this.buildConclusion(
+      qualityScore,
+      rawPly.pointCount,
+      processedPly.pointCount,
+      rawReprojectionError,
+      processedReprojectionError,
+    );
     const metrics = {
       raw: {
         ply: rawPly,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         opensfm: rawMetrics,
       },
       processed: {
         ply: processedPly,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         opensfm: processedMetrics,
       },
       comparison: {
         pointCountDelta: processedPly.pointCount - rawPly.pointCount,
-        pointCountRatio: rawPly.pointCount > 0 ? processedPly.pointCount / rawPly.pointCount : null,
+        pointCountRatio:
+          rawPly.pointCount > 0
+            ? processedPly.pointCount / rawPly.pointCount
+            : null,
         qualityScore,
       },
     };
@@ -139,7 +188,10 @@ export class EvaluationService {
   }
 
   async findById(id: string) {
-    const result = await this.databaseService.query(`SELECT * FROM evaluation_results WHERE id = $1`, [id]);
+    const result = await this.databaseService.query(
+      `SELECT * FROM evaluation_results WHERE id = $1`,
+      [id],
+    );
     const evaluation = result.rows[0];
     if (!evaluation) {
       throw new NotFoundException('Evaluation result not found');
@@ -148,7 +200,10 @@ export class EvaluationService {
   }
 
   async findByPipeline(pipelineRunId: string) {
-    const result = await this.databaseService.query(`SELECT * FROM evaluation_results WHERE pipeline_run_id = $1`, [pipelineRunId]);
+    const result = await this.databaseService.query(
+      `SELECT * FROM evaluation_results WHERE pipeline_run_id = $1`,
+      [pipelineRunId],
+    );
     const evaluation = result.rows[0];
     if (!evaluation) {
       throw new NotFoundException('Evaluation result not found');
@@ -174,7 +229,9 @@ export class EvaluationService {
   }
 
   private async downloadStorageFile(fileId: string) {
-    const response = await fetch(`${this.storageServiceUrl()}/storage/files/${fileId}/download`);
+    const response = await fetch(
+      `${this.storageServiceUrl()}/storage/files/${fileId}/download`,
+    );
     if (!response.ok) {
       throw new BadRequestException(await response.text());
     }
@@ -182,28 +239,32 @@ export class EvaluationService {
   }
 
   private storageServiceUrl() {
-    return this.configService.get<string>('STORAGE_SERVICE_URL', 'http://storage-service:3004');
+    return this.configService.get<string>(
+      'STORAGE_SERVICE_URL',
+      'http://storage-service:3004',
+    );
   }
 
   private parsePly(buffer: Buffer): PlyMetrics {
-    const textStart = buffer.subarray(0, Math.min(buffer.length, 1024 * 1024)).toString('utf8');
+    const textStart = buffer
+      .subarray(0, Math.min(buffer.length, 1024 * 1024))
+      .toString('utf8');
     const headerEndIndex = textStart.indexOf('end_header');
     if (!textStart.startsWith('ply') || headerEndIndex < 0) {
       return { pointCount: 0, format: null, bbox: null, density: null };
     }
-    const header = textStart.slice(0, headerEndIndex).split(/?
-/);
-    const vertexLine = header.find((line) => line.startsWith('element vertex '));
+    const header = textStart.slice(0, headerEndIndex).split(/\n/);
+    const vertexLine = header.find((line) =>
+      line.startsWith('element vertex '),
+    );
     const formatLine = header.find((line) => line.startsWith('format '));
     const pointCount = vertexLine ? Number(vertexLine.split(/\s+/)[2]) : 0;
     const format = formatLine ? formatLine.split(/\s+/)[1] : null;
     if (format !== 'ascii') {
       return { pointCount, format, bbox: null, density: null };
     }
-    const bodyStart = textStart.indexOf('
-', headerEndIndex) + 1;
-    const body = textStart.slice(bodyStart).split(/?
-/);
+    const bodyStart = textStart.indexOf('\n', headerEndIndex) + 1;
+    const body = textStart.slice(bodyStart).split(/\n/);
     let minX = Number.POSITIVE_INFINITY;
     let minY = Number.POSITIVE_INFINITY;
     let minZ = Number.POSITIVE_INFINITY;
@@ -252,21 +313,58 @@ export class EvaluationService {
     return null;
   }
 
-  private calculateQualityScore(input: { rawPointCount: number; processedPointCount: number; rawReprojectionError: number | null; processedReprojectionError: number | null; rawImagesRatio: number | null; processedImagesRatio: number | null }) {
-    const pointScore = input.rawPointCount > 0 ? Math.min((input.processedPointCount / input.rawPointCount) * 40, 40) : 0;
-    const errorScore = input.rawReprojectionError && input.processedReprojectionError
-      ? Math.max(0, Math.min((input.rawReprojectionError / input.processedReprojectionError) * 30, 30))
-      : 15;
-    const imageScore = input.rawImagesRatio && input.processedImagesRatio
-      ? Math.max(0, Math.min((input.processedImagesRatio / input.rawImagesRatio) * 20, 20))
-      : 10;
+  private calculateQualityScore(input: {
+    rawPointCount: number;
+    processedPointCount: number;
+    rawReprojectionError: number | null;
+    processedReprojectionError: number | null;
+    rawImagesRatio: number | null;
+    processedImagesRatio: number | null;
+  }) {
+    const pointScore =
+      input.rawPointCount > 0
+        ? Math.min((input.processedPointCount / input.rawPointCount) * 40, 40)
+        : 0;
+    const errorScore =
+      input.rawReprojectionError && input.processedReprojectionError
+        ? Math.max(
+            0,
+            Math.min(
+              (input.rawReprojectionError / input.processedReprojectionError) *
+                30,
+              30,
+            ),
+          )
+        : 15;
+    const imageScore =
+      input.rawImagesRatio && input.processedImagesRatio
+        ? Math.max(
+            0,
+            Math.min(
+              (input.processedImagesRatio / input.rawImagesRatio) * 20,
+              20,
+            ),
+          )
+        : 10;
     const stabilityScore = input.processedPointCount > 0 ? 10 : 0;
-    return Number(Math.max(0, Math.min(pointScore + errorScore + imageScore + stabilityScore, 100)).toFixed(3));
+    return Number(
+      Math.max(
+        0,
+        Math.min(pointScore + errorScore + imageScore + stabilityScore, 100),
+      ).toFixed(3),
+    );
   }
 
-  private buildConclusion(score: number, rawPointCount: number, processedPointCount: number, rawError: number | null, processedError: number | null) {
+  private buildConclusion(
+    score: number,
+    rawPointCount: number,
+    processedPointCount: number,
+    rawError: number | null,
+    processedError: number | null,
+  ) {
     const pointDelta = processedPointCount - rawPointCount;
-    const errorImproved = rawError !== null && processedError !== null && processedError < rawError;
+    const errorImproved =
+      rawError !== null && processedError !== null && processedError < rawError;
     if (score >= 70 && (pointDelta >= 0 || errorImproved)) {
       return 'Nhánh tiền xử lý cho kết quả tốt hơn hoặc ổn định hơn nhánh gốc.';
     }
@@ -287,7 +385,8 @@ export class EvaluationService {
       rawReprojectionError: row.raw_reprojection_error,
       processedReprojectionError: row.processed_reprojection_error,
       rawReconstructedImagesRatio: row.raw_reconstructed_images_ratio,
-      processedReconstructedImagesRatio: row.processed_reconstructed_images_ratio,
+      processedReconstructedImagesRatio:
+        row.processed_reconstructed_images_ratio,
       rawProcessingTimeMs: row.raw_processing_time_ms,
       processedProcessingTimeMs: row.processed_processing_time_ms,
       qualityScore: row.quality_score,

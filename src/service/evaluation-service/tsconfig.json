@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    "ignoreDeprecations": "6.0",
     "declaration": false,
     "removeComments": true,
     "emitDecoratorMetadata": true,
@@ -9,7 +10,8 @@
     "target": "ES2022",
     "sourceMap": false,
     "outDir": "./dist",
-    "baseUrl": "./",
+    "rootDir": "./src",
+    // "baseUrl": "./",
     "incremental": false,
     "strict": true,
     "skipLibCheck": true,
