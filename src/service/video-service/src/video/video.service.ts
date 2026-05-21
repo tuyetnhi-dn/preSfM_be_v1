@@ -11,6 +11,7 @@ import { CreatePipelineBody, PipelineType } from '../type/pipline.type';
 type UploadBody = {
   datasetId?: string;
   uploadedBy?: string;
+  projectName?: string;
 };
 
 type StorageUploadResponse = {
@@ -41,27 +42,30 @@ export class VideoService {
 
   private async createProject(
     userId?: string,
-  ): Promise<{ id: string; name: string }> {
-    if (!userId) {
-      throw new BadRequestException(
-        'uploadedBy is required — must be a valid user UUID',
-      );
-    }
-
-    const name = `Project ${new Date().toISOString().slice(0, 10)} ${randomUUID().slice(0, 6)}`;
+    projectName?: string,
+  ): Promise<{
+    id: string;
+    name: string;
+  }> {
+    const name =
+      projectName?.trim() ||
+      `Project ${new Date().toISOString().slice(0, 10)} ${randomUUID().slice(0, 6)}`;
 
     const result = await this.databaseService.query(
       `INSERT INTO projects(user_id, name, status)
      VALUES ($1, $2, 'active')
      RETURNING id, name`,
-      [userId, name],
+      [userId ?? null, name],
     );
 
     return result.rows[0] as { id: string; name: string };
   }
 
-  private async createDataset(userId?: string): Promise<DatasetRow> {
-    const project = await this.createProject(userId);
+  private async createDataset(
+    userId?: string,
+    projectName?: string,
+  ): Promise<DatasetRow> {
+    const project = await this.createProject(userId, projectName);
 
     const name = `Dataset ${new Date().toISOString().slice(0, 10)}`;
 
@@ -87,11 +91,15 @@ export class VideoService {
       throw new BadRequestException('Unsupported video format');
     }
 
+    const decodedName = Buffer.from(file.originalname, 'latin1').toString(
+      'utf8',
+    );
+
     const dataset = body.datasetId
       ? await this.getDataset(body.datasetId)
-      : await this.createDataset(body.uploadedBy);
+      : await this.createDataset(body.uploadedBy, body.projectName);
 
-    const extension = this.fileExtension(file.originalname);
+    const extension = this.fileExtension(decodedName);
     const objectPath = `projects/${dataset.project_id}/datasets/${dataset.id}/videos/${randomUUID()}${extension}`;
 
     const storageFile = await this.uploadToStorage(file, {
@@ -104,9 +112,9 @@ export class VideoService {
 
     const result = await this.databaseService.query(
       `INSERT INTO videos(dataset_id, storage_file_id, original_name, mime_type, size_bytes, status)
-       VALUES ($1, $2, $3, $4, $5, 'uploaded')
-       RETURNING id, dataset_id, storage_file_id, original_name, mime_type, size_bytes, status, created_at`,
-      [dataset.id, storageFile.id, file.originalname, file.mimetype, file.size],
+     VALUES ($1, $2, $3, $4, $5, 'uploaded')
+     RETURNING id, dataset_id, storage_file_id, original_name, mime_type, size_bytes, status, created_at`,
+      [dataset.id, storageFile.id, decodedName, file.mimetype, file.size],
     );
 
     await this.databaseService.query(
@@ -118,7 +126,10 @@ export class VideoService {
       ...this.mapVideo(result.rows[0]),
       projectId: dataset.project_id,
       datasetId: dataset.id,
-      storageFile,
+      storageFile: {
+        ...storageFile,
+        originalName: decodedName,
+      },
     };
   }
 

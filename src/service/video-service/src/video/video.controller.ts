@@ -29,11 +29,6 @@ export class VideoController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { datasetId?: string; uploadedBy?: string },
   ) {
-    if (file) {
-      file.originalname = Buffer.from(file.originalname, 'latin1').toString(
-        'utf8',
-      );
-    }
     return this.videoService.upload(file, body);
   }
 
