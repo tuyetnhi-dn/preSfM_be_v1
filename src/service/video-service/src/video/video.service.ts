@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { CreatePipelineBody, PipelineType } from '../type/pipline.type';
+import { FrameAssetService } from './frame-asset.service';
 
 type UploadBody = {
   datasetId?: string;
@@ -31,14 +32,23 @@ type DatasetRow = {
   status: string;
 };
 
+type PipelineRunRow = {
+  id: string;
+  dataset_id: string;
+  video_id: string;
+  status: string;
+  progress: number;
+  config: Record<string, unknown>;
+  pipeline_type: string;
+};
+
 @Injectable()
 export class VideoService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
+    private readonly frameAssetService: FrameAssetService,
   ) {}
-
-  // ─── Auto-create helpers ──────────────────────────────────────────────────
 
   private async createProject(
     userId?: string,
@@ -53,8 +63,8 @@ export class VideoService {
 
     const result = await this.databaseService.query(
       `INSERT INTO projects(user_id, name, status)
-     VALUES ($1, $2, 'active')
-     RETURNING id, name`,
+       VALUES ($1, $2, 'active')
+       RETURNING id, name`,
       [userId ?? null, name],
     );
 
@@ -71,22 +81,21 @@ export class VideoService {
 
     const result = await this.databaseService.query(
       `INSERT INTO datasets(project_id, name, status,
-                          raw_frame_count, selected_frame_count,
-                          rejected_frame_count, mask_count)
-     VALUES ($1, $2, 'created', 0, 0, 0, 0)
-     RETURNING id, project_id, name, status`,
+                            raw_frame_count, selected_frame_count,
+                            rejected_frame_count, mask_count)
+       VALUES ($1, $2, 'created', 0, 0, 0, 0)
+       RETURNING id, project_id, name, status`,
       [project.id, name],
     );
 
     return result.rows[0] as DatasetRow;
   }
 
-  // ─── Public API ───────────────────────────────────────────────────────────
-
   async upload(file: Express.Multer.File, body: UploadBody) {
     if (!file) {
       throw new BadRequestException('Video file is required');
     }
+
     if (!this.isAllowedVideo(file.mimetype, file.originalname)) {
       throw new BadRequestException('Unsupported video format');
     }
@@ -112,8 +121,8 @@ export class VideoService {
 
     const result = await this.databaseService.query(
       `INSERT INTO videos(dataset_id, storage_file_id, original_name, mime_type, size_bytes, status)
-     VALUES ($1, $2, $3, $4, $5, 'uploaded')
-     RETURNING id, dataset_id, storage_file_id, original_name, mime_type, size_bytes, status, created_at`,
+       VALUES ($1, $2, $3, $4, $5, 'uploaded')
+       RETURNING id, dataset_id, storage_file_id, original_name, mime_type, size_bytes, status, created_at`,
       [dataset.id, storageFile.id, decodedName, file.mimetype, file.size],
     );
 
@@ -162,15 +171,19 @@ export class VideoService {
        WHERE v.id = $1`,
       [id],
     );
+
     const video = result.rows[0];
+
     if (!video) {
       throw new NotFoundException('Video not found');
     }
+
     return this.mapVideo(video);
   }
 
   async metadata(id: string) {
     const video = await this.findById(id);
+
     return {
       id: video.id,
       durationMs: video.durationMs,
@@ -185,32 +198,26 @@ export class VideoService {
   async createFrameExtractionPipeline(id: string, body: CreatePipelineBody) {
     const video = await this.findById(id);
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const pipelineType = body.pipelineType as PipelineType;
+    const config = this.buildPipelineConfig(body);
+
     const pipeline = await this.databaseService.query(
       `INSERT INTO pipeline_runs(dataset_id, video_id, status, progress, config, pipeline_type)
        VALUES ($1, $2, 'pending', 0, $3::jsonb, $4)
        RETURNING *`,
-      [
-        video.datasetId,
-        id,
-        JSON.stringify({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          sampleFps: body.sampleFps ?? 2,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          ...(body.config ?? {}),
-        }),
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        body.pipelineType,
-      ],
+      [video.datasetId, id, JSON.stringify(config), pipelineType],
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-    const steps = this.getStepsForPipeline(body.pipelineType);
+    const pipelineRun = pipeline.rows[0] as PipelineRunRow;
+    const steps = this.getStepsForPipeline(pipelineType);
 
     for (const [key, name] of steps) {
       await this.databaseService.query(
         `INSERT INTO pipeline_steps(pipeline_run_id, step_key, step_name)
-         VALUES ($1, $2, $3) ON CONFLICT(pipeline_run_id, step_key) DO NOTHING`,
-        [pipeline.rows[0].id, key, name],
+         VALUES ($1, $2, $3)
+         ON CONFLICT(pipeline_run_id, step_key) DO NOTHING`,
+        [pipelineRun.id, key, name],
       );
     }
 
@@ -219,26 +226,44 @@ export class VideoService {
       [id],
     );
 
-    return pipeline.rows[0];
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    return this.frameAssetService.runFrameExtraction({
+      video,
+      pipelineRun: {
+        ...pipelineRun,
+        pipeline_type: pipelineType,
+      },
+      pipelineType,
+      config,
+    });
+  }
+
+  async getVideoAssets(id: string) {
+    await this.findById(id);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    return this.frameAssetService.getVideoAssets(id);
   }
 
   async delete(id: string) {
     const video = await this.findById(id);
+
     await this.databaseService.query(`DELETE FROM videos WHERE id = $1`, [id]);
+
     return { success: true, deletedVideoId: video.id };
   }
 
-  // ─── Private helpers ──────────────────────────────────────────────────────
-
   private async getDataset(datasetId: string): Promise<DatasetRow> {
     const result = await this.databaseService.query(
-      `SELECT id, project_id, status FROM datasets WHERE id = $1`,
+      `SELECT id, project_id, name, status FROM datasets WHERE id = $1`,
       [datasetId],
     );
+
     const dataset = result.rows[0];
+
     if (!dataset) {
       throw new NotFoundException('Dataset not found');
     }
+
     return dataset as DatasetRow;
   }
 
@@ -253,24 +278,37 @@ export class VideoService {
     },
   ) {
     const formData = new FormData();
+
     formData.append(
       'file',
       new Blob([file.buffer as unknown as BlobPart], { type: file.mimetype }),
       file.originalname,
     );
+
     formData.append('bucket', input.bucket);
     formData.append('path', input.path);
-    if (input.uploadedBy) formData.append('uploadedBy', input.uploadedBy);
-    if (input.projectId) formData.append('projectId', input.projectId);
-    if (input.datasetId) formData.append('datasetId', input.datasetId);
+
+    if (input.uploadedBy) {
+      formData.append('uploadedBy', input.uploadedBy);
+    }
+
+    if (input.projectId) {
+      formData.append('projectId', input.projectId);
+    }
+
+    if (input.datasetId) {
+      formData.append('datasetId', input.datasetId);
+    }
 
     const response = await fetch(`${this.storageServiceUrl()}/storage/upload`, {
       method: 'POST',
       body: formData,
     });
+
     if (!response.ok) {
       throw new BadRequestException(await response.text());
     }
+
     return (await response.json()) as StorageUploadResponse;
   }
 
@@ -303,8 +341,37 @@ export class VideoService {
     ];
   }
 
+  private buildPipelineConfig(body: CreatePipelineBody) {
+    const bodyConfig =
+      typeof body.config === 'object' && body.config !== null
+        ? // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+          (body.config as Record<string, unknown>)
+        : {};
+
+    return {
+      ...bodyConfig,
+      sampleFps: this.toNumber(body.sampleFps ?? bodyConfig.sampleFps, 2),
+      outputRawFolder: this.toString(bodyConfig.outputRawFolder, 'raw_images'),
+      outputMaskFolder: this.toString(bodyConfig.outputMaskFolder, 'masks'),
+      outputProcessedFolder: this.toString(
+        bodyConfig.outputProcessedFolder,
+        'processed_images',
+      ),
+    };
+  }
+
+  private toNumber(value: unknown, fallback: number) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : fallback;
+  }
+
+  private toString(value: unknown, fallback: string) {
+    return typeof value === 'string' && value.trim() ? value : fallback;
+  }
+
   private isAllowedVideo(mimeType: string, filename: string) {
     const lower = filename.toLowerCase();
+
     return (
       mimeType.startsWith('video/') ||
       lower.endsWith('.mp4') ||

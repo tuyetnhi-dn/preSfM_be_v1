@@ -45,11 +45,11 @@ export class StorageController {
     @Query('path') path: string,
     @Query('expiresIn') expiresIn?: string,
   ) {
-    return this.storageService.signedUrl(
+    return this.storageService.createSignedUrl({
       bucket,
       path,
-      Number(expiresIn || 3600),
-    );
+      expiresIn: expiresIn ? Number(expiresIn) : 3600,
+    });
   }
 
   @Get('files/:id')

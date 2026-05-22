@@ -112,6 +112,15 @@ export class GatewayController {
     });
   }
 
+  @Get('videos/:id/assets')
+  videoAssets(@Param('id') id: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}/assets`,
+      method: 'GET',
+    });
+  }
+
   @Get('videos/:id')
   findVideo(@Param('id') id: string) {
     return this.gatewayService.jsonRequest({
