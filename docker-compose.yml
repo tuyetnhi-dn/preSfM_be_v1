@@ -178,20 +178,15 @@ services:
     environment:
       PORT: 5000
       MODEL_PATH: /models/Segformer_model.pth
-
       MODEL_ARCH: Segformer
       ENCODER_NAME: resnet50
       NUM_CLASSES: 2
       FOREGROUND_CLASS_ID: 1
-
-      TARGET_HEIGHT: 768
-      TARGET_WIDTH: 768
-
+      INPUT_SIZE: 768
       MODEL_MEAN: 0.485,0.456,0.406
       MODEL_STD: 0.229,0.224,0.225
-
       DEVICE: cpu
-      STRICT_LOAD: 'true'
+      STRICT_LOAD: 'false'
       MIN_FOREGROUND_RATIO: 0.001
     volumes:
       - ./src/service/segmentation-service/models:/models

@@ -4,11 +4,10 @@ from fastapi.responses import Response
 from app.inference import (
     ENCODER_NAME,
     FOREGROUND_CLASS_ID,
+    INPUT_SIZE,
     MODEL_ARCH,
     MODEL_PATH,
     NUM_CLASSES,
-    TARGET_HEIGHT,
-    TARGET_WIDTH,
     SegmentationModel,
     encode_mask_png,
 )
@@ -43,8 +42,9 @@ def model_info():
         "encoderName": ENCODER_NAME,
         "numClasses": NUM_CLASSES,
         "foregroundClassId": FOREGROUND_CLASS_ID,
-        "targetHeight": TARGET_HEIGHT,
-        "targetWidth": TARGET_WIDTH,
+        "inputSize": INPUT_SIZE,
+        "resizePolicy": "letterbox_square_before_model_only",
+        "maskOutputSize": "original_image_size",
     }
 
 
@@ -56,7 +56,9 @@ async def segment(image: UploadFile = File(...)):
     try:
         image_bytes = await image.read()
 
-        mask = segmenter.predict(image_bytes)
+        result = segmenter.predict_original_size_mask(image_bytes)
+
+        mask = result["mask"]
 
         if mask is None:
             return Response(status_code=204)
@@ -66,6 +68,11 @@ async def segment(image: UploadFile = File(...)):
         return Response(
             content=mask_png,
             media_type="image/png",
+            headers={
+                "X-Original-Width": str(result["meta"]["orig_w"]),
+                "X-Original-Height": str(result["meta"]["orig_h"]),
+                "X-Foreground-Ratio": str(result["foreground_ratio"]),
+            },
         )
 
     except Exception as exc:

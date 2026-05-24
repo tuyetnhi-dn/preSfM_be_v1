@@ -5,7 +5,6 @@ from typing import Any
 import cv2
 import numpy as np
 import torch
-from PIL import Image
 
 from app.model_definition import build_model
 
@@ -16,24 +15,99 @@ MODEL_ARCH = os.getenv("MODEL_ARCH", "Segformer")
 ENCODER_NAME = os.getenv("ENCODER_NAME", "resnet50")
 NUM_CLASSES = int(os.getenv("NUM_CLASSES", "2"))
 
-TARGET_HEIGHT = int(os.getenv("TARGET_HEIGHT", "768"))
-TARGET_WIDTH = int(os.getenv("TARGET_WIDTH", "768"))
-
+INPUT_SIZE = int(os.getenv("INPUT_SIZE", "768"))
 FOREGROUND_CLASS_ID = int(os.getenv("FOREGROUND_CLASS_ID", "1"))
-MIN_FOREGROUND_RATIO = float(os.getenv("MIN_FOREGROUND_RATIO", "0.001"))
+MIN_FOREGROUND_RATIO = float(os.getenv("MIN_FOREGROUND_RATIO", "0.0"))
 
-STRICT_LOAD = os.getenv("STRICT_LOAD", "true").lower() == "true"
+STRICT_LOAD = os.getenv("STRICT_LOAD", "false").lower() == "true"
 DEVICE_NAME = os.getenv("DEVICE", "cpu")
 
-MEAN = [
-    float(x)
-    for x in os.getenv("MODEL_MEAN", "0.485,0.456,0.406").split(",")
-]
+IMAGENET_MEAN = np.array(
+    [float(x) for x in os.getenv("MODEL_MEAN", "0.485,0.456,0.406").split(",")],
+    dtype=np.float32,
+)
 
-STD = [
-    float(x)
-    for x in os.getenv("MODEL_STD", "0.229,0.224,0.225").split(",")
-]
+IMAGENET_STD = np.array(
+    [float(x) for x in os.getenv("MODEL_STD", "0.229,0.224,0.225").split(",")],
+    dtype=np.float32,
+)
+
+
+def decode_image(image_bytes: bytes) -> np.ndarray:
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image_bgr = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+    if image_bgr is None:
+        raise ValueError("Cannot decode image")
+
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    return image_rgb
+
+
+def letterbox_square(image_np: np.ndarray, size: int = 768, pad_value: int = 0):
+    orig_h, orig_w = image_np.shape[:2]
+
+    scale = min(size / orig_w, size / orig_h)
+
+    new_w = int(round(orig_w * scale))
+    new_h = int(round(orig_h * scale))
+
+    resized = cv2.resize(
+        image_np,
+        (new_w, new_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+    pad_left = (size - new_w) // 2
+    pad_right = size - new_w - pad_left
+
+    pad_top = (size - new_h) // 2
+    pad_bottom = size - new_h - pad_top
+
+    padded = cv2.copyMakeBorder(
+        resized,
+        pad_top,
+        pad_bottom,
+        pad_left,
+        pad_right,
+        borderType=cv2.BORDER_CONSTANT,
+        value=(pad_value, pad_value, pad_value),
+    )
+
+    meta = {
+        "orig_h": orig_h,
+        "orig_w": orig_w,
+        "new_h": new_h,
+        "new_w": new_w,
+        "pad_top": pad_top,
+        "pad_bottom": pad_bottom,
+        "pad_left": pad_left,
+        "pad_right": pad_right,
+        "scale": scale,
+    }
+
+    return padded, meta
+
+
+def image_to_tensor(image_np: np.ndarray) -> torch.Tensor:
+    image = image_np.astype(np.float32) / 255.0
+    image = (image - IMAGENET_MEAN) / IMAGENET_STD
+
+    tensor = torch.from_numpy(image)
+    tensor = tensor.permute(2, 0, 1)
+    tensor = tensor.unsqueeze(0)
+    tensor = tensor.float()
+
+    return tensor
+
+
+def encode_mask_png(mask: np.ndarray) -> bytes:
+    success, encoded = cv2.imencode(".png", mask)
+
+    if not success:
+        raise RuntimeError("Cannot encode mask PNG")
+
+    return encoded.tobytes()
 
 
 class SegmentationModel:
@@ -77,8 +151,7 @@ class SegmentationModel:
         print(f"[Segmentation] MODEL_ARCH={MODEL_ARCH}")
         print(f"[Segmentation] ENCODER_NAME={ENCODER_NAME}")
         print(f"[Segmentation] NUM_CLASSES={NUM_CLASSES}")
-        print(f"[Segmentation] TARGET_HEIGHT={TARGET_HEIGHT}")
-        print(f"[Segmentation] TARGET_WIDTH={TARGET_WIDTH}")
+        print(f"[Segmentation] INPUT_SIZE={INPUT_SIZE}")
         print(f"[Segmentation] FOREGROUND_CLASS_ID={FOREGROUND_CLASS_ID}")
         print(f"[Segmentation] DEVICE={self.device}")
         print(f"[Segmentation] STRICT_LOAD={STRICT_LOAD}")
@@ -119,77 +192,64 @@ class SegmentationModel:
 
         return cleaned
 
-    def preprocess(self, image_bytes: bytes) -> torch.Tensor:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    def predict_original_size_mask(self, image_bytes: bytes):
+        original_image = decode_image(image_bytes)
 
-        image = image.resize(
-            (TARGET_WIDTH, TARGET_HEIGHT),
-            Image.BILINEAR,
+        padded_image, meta = letterbox_square(
+            original_image,
+            size=INPUT_SIZE,
+            pad_value=0,
         )
 
-        array = np.asarray(image).astype(np.float32) / 255.0
-
-        mean = np.array(MEAN, dtype=np.float32).reshape(1, 1, 3)
-        std = np.array(STD, dtype=np.float32).reshape(1, 1, 3)
-
-        array = (array - mean) / std
-
-        array = np.transpose(array, (2, 0, 1))
-
-        tensor = torch.from_numpy(array).float().unsqueeze(0)
-
-        return tensor.to(self.device)
-
-    def predict(self, image_bytes: bytes) -> np.ndarray | None:
-        tensor = self.preprocess(image_bytes)
+        tensor = image_to_tensor(padded_image).to(self.device)
 
         with torch.no_grad():
             logits = self.model(tensor)
 
-        if logits.shape[-2:] != (TARGET_HEIGHT, TARGET_WIDTH):
+        if logits.shape[-2:] != (INPUT_SIZE, INPUT_SIZE):
             logits = torch.nn.functional.interpolate(
                 logits,
-                size=(TARGET_HEIGHT, TARGET_WIDTH),
+                size=(INPUT_SIZE, INPUT_SIZE),
                 mode="bilinear",
                 align_corners=False,
             )
 
-        pred = torch.argmax(logits, dim=1)[0]
-        pred = pred.detach().cpu().numpy().astype(np.uint8)
+        pred_square = torch.argmax(logits, dim=1)[0]
+        pred_square = pred_square.detach().cpu().numpy().astype(np.uint8)
 
-        mask = (pred == FOREGROUND_CLASS_ID).astype(np.uint8) * 255
+        top = meta["pad_top"]
+        left = meta["pad_left"]
+        new_h = meta["new_h"]
+        new_w = meta["new_w"]
 
-        foreground_ratio = float(np.count_nonzero(mask)) / float(
-            TARGET_HEIGHT * TARGET_WIDTH
+        pred_unpadded = pred_square[
+            top:top + new_h,
+            left:left + new_w,
+        ]
+
+        pred_original_size = cv2.resize(
+            pred_unpadded,
+            (meta["orig_w"], meta["orig_h"]),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(np.uint8)
+
+        mask_binary = (pred_original_size == FOREGROUND_CLASS_ID).astype(np.uint8)
+
+        foreground_ratio = float(np.count_nonzero(mask_binary)) / float(
+            meta["orig_w"] * meta["orig_h"]
         )
 
         if foreground_ratio < MIN_FOREGROUND_RATIO:
-            return None
+            return {
+                "mask": None,
+                "meta": meta,
+                "foreground_ratio": foreground_ratio,
+            }
 
-        mask = self.clean_mask(mask)
+        mask_255 = (mask_binary * 255).astype(np.uint8)
 
-        return mask
-
-    def clean_mask(self, mask: np.ndarray) -> np.ndarray:
-        kernel = np.ones((5, 5), np.uint8)
-
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        return mask
-
-
-def encode_mask_png(mask: np.ndarray) -> bytes:
-    if mask.shape[:2] != (TARGET_HEIGHT, TARGET_WIDTH):
-        mask = cv2.resize(
-            mask,
-            (TARGET_WIDTH, TARGET_HEIGHT),
-            interpolation=cv2.INTER_NEAREST,
-        )
-
-    success, encoded = cv2.imencode(".png", mask)
-
-    if not success:
-        raise RuntimeError("Cannot encode mask PNG")
-
-    return encoded.tobytes()
+        return {
+            "mask": mask_255,
+            "meta": meta,
+            "foreground_ratio": foreground_ratio,
+        }

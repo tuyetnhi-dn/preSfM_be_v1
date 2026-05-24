@@ -1,29 +1,7 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import {
-  calculateImageQuality,
-  resizeWithPadding,
-  TARGET_SIZE,
-} from './image-preprocessor';
+import { calculateImageQuality } from './image-preprocessor';
 import sharp from 'sharp';
-
-export type GenerateMaskJobInput = {
-  pipelineRunId: string;
-  imagesPaths: string[];
-  outputMasksDir: string;
-};
-
-export type MaskResult = {
-  imageName: string;
-  maskPath: string;
-  skipped: boolean;
-};
 
 export type RawFrameInput = {
   frameId: string;
@@ -57,8 +35,6 @@ export type ProcessRawFrameResult = {
 
 @Injectable()
 export class MaskGenerationService {
-  private readonly logger = new Logger(MaskGenerationService.name);
-
   constructor(private readonly configService: ConfigService) {}
 
   async processRawFrames(input: ProcessRawFramesInput): Promise<{
@@ -67,8 +43,8 @@ export class MaskGenerationService {
     selectedCount: number;
     rejectedCount: number;
   }> {
-    const blurThreshold = Number(input.config?.blurThreshold ?? 100);
-    const noiseThreshold = Number(input.config?.noiseThreshold ?? 25);
+    const blurThreshold = Number(input.config?.blurThreshold ?? 150);
+    const noiseThreshold = Number(input.config?.noiseThreshold ?? 10);
 
     const outputProcessedFolder =
       input.config?.outputProcessedFolder ?? 'processed_images';
@@ -91,7 +67,13 @@ export class MaskGenerationService {
       results.push(result);
     }
 
-    const selectedCount = results.filter((item) => item.isSelected).length;
+    const selectedCount = results.filter(
+      (item) =>
+        item.isSelected &&
+        item.processedStorageFileId &&
+        item.maskStorageFileId,
+    ).length;
+
     const rejectedCount = results.length - selectedCount;
 
     return {
@@ -111,20 +93,16 @@ export class MaskGenerationService {
     outputProcessedFolder: string;
     outputMaskFolder: string;
   }): Promise<ProcessRawFrameResult> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
-    const rawBuffer = await this.downloadStorageFile(
+    const rawFile = await this.downloadStorageFile(
       input.frame.rawStorageFileId,
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const quality = await calculateImageQuality(rawBuffer);
+    const quality = await calculateImageQuality(rawFile.buffer);
 
     let rejectedReason: string | null = null;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     if (quality.blurScore < input.blurThreshold) {
       rejectedReason = 'blur';
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     } else if (quality.noiseScore > input.noiseThreshold) {
       rejectedReason = 'noise';
     }
@@ -133,9 +111,7 @@ export class MaskGenerationService {
       return {
         frameId: input.frame.frameId,
         frameIndex: input.frame.frameIndex,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         blurScore: quality.blurScore,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         noiseScore: quality.noiseScore,
         isSelected: false,
         rejectedReason,
@@ -144,59 +120,55 @@ export class MaskGenerationService {
       };
     }
 
-    const resized = await resizeWithPadding(rawBuffer);
+    const imageName = `frame_${String(input.frame.frameIndex + 1).padStart(
+      6,
+      '0',
+    )}`;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
     const processedPath = this.buildObjectPath({
       datasetId: input.datasetId,
       videoId: input.videoId,
       folder: input.outputProcessedFolder,
       frameIndex: input.frame.frameIndex,
-      extension: 'png',
+      extension: rawFile.extension,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
     const uploadedProcessed = await this.uploadBufferToStorage({
-      buffer: resized.buffer,
-      filename: `frame_${String(input.frame.frameIndex + 1).padStart(6, '0')}.png`,
-      mimeType: 'image/png',
+      buffer: rawFile.buffer,
+      filename: `${imageName}.${rawFile.extension}`,
+      mimeType: rawFile.mimeType,
       bucket: this.defaultBucket(),
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       objectPath: processedPath,
       datasetId: input.datasetId,
     });
 
-    const maskBuffer = await this.callSegmentationModel(
-      resized.buffer,
-      `frame_${String(input.frame.frameIndex + 1).padStart(6, '0')}`,
-    );
+    let maskBuffer = await this.callSegmentationModel({
+      imageBuffer: rawFile.buffer,
+      imageName,
+      mimeType: rawFile.mimeType,
+      extension: rawFile.extension,
+    });
 
-    let maskStorageFileId: string | null = null;
-
-    if (maskBuffer) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
-      const maskPath = this.buildObjectPath({
-        datasetId: input.datasetId,
-        videoId: input.videoId,
-        folder: input.outputMaskFolder,
-        frameIndex: input.frame.frameIndex,
-        extension: 'png',
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
-      const uploadedMask = await this.uploadBufferToStorage({
-        buffer: maskBuffer,
-        filename: `frame_${String(input.frame.frameIndex + 1).padStart(6, '0')}.png`,
-        mimeType: 'image/png',
-        bucket: this.defaultBucket(),
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        objectPath: maskPath,
-        datasetId: input.datasetId,
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      maskStorageFileId = uploadedMask.id;
+    if (!maskBuffer) {
+      maskBuffer = await this.createEmptyMaskFromImage(rawFile.buffer);
     }
+
+    const maskPath = this.buildObjectPath({
+      datasetId: input.datasetId,
+      videoId: input.videoId,
+      folder: input.outputMaskFolder,
+      frameIndex: input.frame.frameIndex,
+      extension: 'png',
+    });
+
+    const uploadedMask = await this.uploadBufferToStorage({
+      buffer: maskBuffer,
+      filename: `${imageName}.png`,
+      mimeType: 'image/png',
+      bucket: this.defaultBucket(),
+      objectPath: maskPath,
+      datasetId: input.datasetId,
+    });
 
     return {
       frameId: input.frame.frameId,
@@ -205,83 +177,51 @@ export class MaskGenerationService {
       noiseScore: quality.noiseScore,
       isSelected: true,
       rejectedReason: null,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       processedStorageFileId: uploadedProcessed.id,
-      maskStorageFileId,
+      maskStorageFileId: uploadedMask.id,
     };
   }
 
-  async generateMasks(input: GenerateMaskJobInput): Promise<MaskResult[]> {
-    await fs.mkdir(input.outputMasksDir, { recursive: true });
+  private async createEmptyMaskFromImage(imageBuffer: Buffer): Promise<Buffer> {
+    const metadata = await sharp(imageBuffer).metadata();
 
-    const results: MaskResult[] = [];
-
-    for (const imagePath of input.imagesPaths) {
-      const imageName = path.basename(imagePath, path.extname(imagePath));
-
-      try {
-        const result = await this.processOne(
-          imagePath,
-          imageName,
-          input.outputMasksDir,
-        );
-        results.push(result);
-      } catch (err) {
-        this.logger.error(
-          `Failed to generate mask for ${imageName}: ${(err as Error).message}`,
-        );
-        results.push({
-          imageName,
-          maskPath: '',
-          skipped: true,
-        });
-      }
+    if (!metadata.width || !metadata.height) {
+      throw new InternalServerErrorException(
+        'Cannot create empty mask because image size is unknown',
+      );
     }
 
-    return results;
+    return sharp({
+      create: {
+        width: metadata.width,
+        height: metadata.height,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
   }
 
-  private async processOne(
-    imagePath: string,
-    imageName: string,
-    outputDir: string,
-  ): Promise<MaskResult> {
-    const rawBuffer = await fs.readFile(imagePath);
-
-    const { buffer: resizedBuffer } = await resizeWithPadding(rawBuffer);
-
-    const maskBuffer = await this.callSegmentationModel(
-      resizedBuffer,
-      imageName,
-    );
-
-    if (!maskBuffer) {
-      const emptyMask = await this.createEmptyMask();
-      const maskPath = path.join(outputDir, `${imageName}.png`);
-      await fs.writeFile(maskPath, emptyMask);
-      return { imageName, maskPath, skipped: true };
-    }
-
-    const maskPath = path.join(outputDir, `${imageName}.png`);
-    await fs.writeFile(maskPath, maskBuffer);
-
-    return { imageName, maskPath, skipped: false };
-  }
-
-  private async callSegmentationModel(
-    imageBuffer: Buffer,
-    imageName: string,
-  ): Promise<Buffer | null> {
+  private async callSegmentationModel(input: {
+    imageBuffer: Buffer;
+    imageName: string;
+    mimeType: string;
+    extension: string;
+  }): Promise<Buffer | null> {
     const modelServiceUrl = this.configService.get<string>(
       'SEGMENTATION_SERVICE_URL',
       'http://segmentation-service:5000',
     );
 
     const formData = new FormData();
+
     formData.append(
       'image',
-      new Blob([imageBuffer as unknown as BlobPart], { type: 'image/png' }),
-      `${imageName}.png`,
+      new Blob([new Uint8Array(input.imageBuffer)], {
+        type: input.mimeType,
+      }),
+      `${input.imageName}.${input.extension}`,
     );
 
     const response = await fetch(`${modelServiceUrl}/segment`, {
@@ -300,18 +240,15 @@ export class MaskGenerationService {
     }
 
     const arrayBuffer = await response.arrayBuffer();
+
     return Buffer.from(arrayBuffer);
   }
 
-  private async createEmptyMask(): Promise<Buffer> {
-    const empty = Buffer.alloc(TARGET_SIZE * TARGET_SIZE, 0);
-    return await sharp(empty, {
-      raw: { width: TARGET_SIZE, height: TARGET_SIZE, channels: 1 },
-    })
-      .png()
-      .toBuffer();
-  }
-  private async downloadStorageFile(storageFileId: string): Promise<Buffer> {
+  private async downloadStorageFile(storageFileId: string): Promise<{
+    buffer: Buffer;
+    mimeType: string;
+    extension: string;
+  }> {
     if (!storageFileId) {
       throw new InternalServerErrorException('Missing storage file id');
     }
@@ -331,9 +268,14 @@ export class MaskGenerationService {
       );
     }
 
+    const contentType = response.headers.get('content-type') ?? 'image/jpeg';
     const arrayBuffer = await response.arrayBuffer();
 
-    return Buffer.from(arrayBuffer);
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimeType: contentType,
+      extension: this.extensionFromMimeType(contentType),
+    };
   }
 
   private async uploadBufferToStorage(input: {
@@ -348,7 +290,7 @@ export class MaskGenerationService {
 
     formData.append(
       'file',
-      new Blob([input.buffer as unknown as BlobPart], {
+      new Blob([new Uint8Array(input.buffer)], {
         type: input.mimeType,
       }),
       input.filename,
@@ -388,7 +330,7 @@ export class MaskGenerationService {
     videoId: string;
     folder: string;
     frameIndex: number;
-    extension: 'png' | 'jpg';
+    extension: string;
   }) {
     const frameName = `frame_${String(input.frameIndex + 1).padStart(
       6,
@@ -396,6 +338,19 @@ export class MaskGenerationService {
     )}.${input.extension}`;
 
     return `datasets/${input.datasetId}/videos/${input.videoId}/${input.folder}/${frameName}`;
+  }
+
+  private extensionFromMimeType(mimeType: string): string {
+    const value = mimeType.toLowerCase();
+
+    if (value.includes('png')) return 'png';
+    if (value.includes('webp')) return 'webp';
+    if (value.includes('bmp')) return 'bmp';
+    if (value.includes('tiff')) return 'tiff';
+    if (value.includes('jpeg')) return 'jpg';
+    if (value.includes('jpg')) return 'jpg';
+
+    return 'jpg';
   }
 
   private storageServiceUrl() {
