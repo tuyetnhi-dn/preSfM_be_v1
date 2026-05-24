@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { VideoService } from './video.service';
+
+import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 import type { CreatePipelineBody } from '../type/pipline.type';
 
 @Controller('videos')
@@ -35,6 +37,18 @@ export class VideoController {
   @Get()
   list(@Query('datasetId') datasetId?: string) {
     return this.videoService.list(datasetId);
+  }
+  @Get(':id/assets')
+  assets(@Param('id') id: string) {
+    return this.videoService.getVideoAssets(id);
+  }
+
+  @Post(':id/preprocess-and-generate-masks')
+  preprocessAndGenerateMasks(
+    @Param('id') id: string,
+    @Body() body: PreprocessAndMaskBody,
+  ) {
+    return this.videoService.preprocessAndGenerateMasks(id, body);
   }
 
   @Get(':id')

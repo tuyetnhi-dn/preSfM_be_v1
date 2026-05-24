@@ -5,10 +5,16 @@ import { VideoService } from './video.service';
 import { FrameAssetService } from './frame-asset.service';
 import { FrameExtractorService } from './frame-extractor.service';
 import { ConfigModule } from '@nestjs/config';
+import { FrameMaskPipelineService } from './frame-mask-pipeline.service';
 
 @Module({
   imports: [ConfigModule, DatabaseModule],
   controllers: [VideoController],
-  providers: [VideoService, FrameAssetService, FrameExtractorService],
+  providers: [
+    VideoService,
+    FrameAssetService,
+    FrameExtractorService,
+    FrameMaskPipelineService,
+  ],
 })
 export class VideoModule {}

@@ -26,6 +26,8 @@ services:
         condition: service_started
       evaluation-service:
         condition: service_started
+      segmentation-service:
+        condition: service_started
     networks:
       - presfm-network
 
@@ -93,11 +95,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_SSL: ${POSTGRES_SSL}
       STORAGE_SERVICE_URL: http://storage-service:8004
+      MASK_GENERATION_SERVICE_URL: http://mask-generation-service:8002
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
     ports:
       - '8003:8003'
     depends_on:
       storage-service:
+        condition: service_started
+      mask-generation-service:
         condition: service_started
     networks:
       - presfm-network
@@ -114,11 +119,19 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_SSL: ${POSTGRES_SSL}
-      SEGMENTATION_SERVICE_URL: ${SEGMENTATION_SERVICE_URL:-http://segmentation-service:5000}
+      STORAGE_SERVICE_URL: http://storage-service:8004
+      SUPABASE_DEFAULT_BUCKET: ${SUPABASE_DEFAULT_BUCKET:-presfm}
+      SEGMENTATION_SERVICE_URL: http://segmentation-service:5000
     ports:
       - '8002:8002'
+    depends_on:
+      storage-service:
+        condition: service_started
+      segmentation-service:
+        condition: service_started
     networks:
       - presfm-network
+
   opensfm-service:
     build:
       context: ./src/service/opensfm-service
@@ -155,6 +168,35 @@ services:
     depends_on:
       storage-service:
         condition: service_started
+    networks:
+      - presfm-network
+
+  segmentation-service:
+    build:
+      context: ./src/service/segmentation-service
+    container_name: presfm-segmentation-service
+    environment:
+      PORT: 5000
+      MODEL_PATH: /models/Segformer_model.pth
+
+      MODEL_ARCH: Segformer
+      ENCODER_NAME: resnet50
+      NUM_CLASSES: 2
+      FOREGROUND_CLASS_ID: 1
+
+      TARGET_HEIGHT: 768
+      TARGET_WIDTH: 768
+
+      MODEL_MEAN: 0.485,0.456,0.406
+      MODEL_STD: 0.229,0.224,0.225
+
+      DEVICE: cpu
+      STRICT_LOAD: 'true'
+      MIN_FOREGROUND_RATIO: 0.001
+    volumes:
+      - ./src/service/segmentation-service/models:/models
+    ports:
+      - '5000:5000'
     networks:
       - presfm-network
 

@@ -112,29 +112,20 @@ export class GatewayController {
     });
   }
 
-  @Get('videos/:id/assets')
-  videoAssets(@Param('id') id: string) {
-    return this.gatewayService.jsonRequest({
-      service: 'video',
-      path: `/videos/${id}/assets`,
-      method: 'GET',
-    });
-  }
-
-  @Get('videos/:id')
-  findVideo(@Param('id') id: string) {
-    return this.gatewayService.jsonRequest({
-      service: 'video',
-      path: `/videos/${id}`,
-      method: 'GET',
-    });
-  }
-
   @Get('videos/:id/metadata')
   videoMetadata(@Param('id') id: string) {
     return this.gatewayService.jsonRequest({
       service: 'video',
       path: `/videos/${id}/metadata`,
+      method: 'GET',
+    });
+  }
+
+  @Get('videos/:id/assets')
+  videoAssets(@Param('id') id: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}/assets`,
       method: 'GET',
     });
   }
@@ -146,6 +137,25 @@ export class GatewayController {
       path: `/videos/${id}/extract-frames`,
       method: 'POST',
       body,
+    });
+  }
+
+  @Post('videos/:id/preprocess-and-generate-masks')
+  preprocessAndGenerateMasks(@Param('id') id: string, @Body() body: unknown) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}/preprocess-and-generate-masks`,
+      method: 'POST',
+      body,
+    });
+  }
+
+  @Get('videos/:id')
+  findVideo(@Param('id') id: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}`,
+      method: 'GET',
     });
   }
 

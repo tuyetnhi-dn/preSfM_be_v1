@@ -6,8 +6,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
-import { CreatePipelineBody, PipelineType } from '../type/pipline.type';
+import type { CreatePipelineBody, PipelineType } from '../type/pipline.type';
 import { FrameAssetService } from './frame-asset.service';
+import { FrameMaskPipelineService } from './frame-mask-pipeline.service';
+import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 
 type UploadBody = {
   datasetId?: string;
@@ -48,6 +50,7 @@ export class VideoService {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
     private readonly frameAssetService: FrameAssetService,
+    private readonly frameMaskPipelineService: FrameMaskPipelineService,
   ) {}
 
   private async createProject(
@@ -402,6 +405,32 @@ export class VideoService {
       bucket: row.bucket,
       objectPath: row.object_path,
       createdAt: row.created_at,
+    };
+  }
+  async preprocessAndGenerateMasks(id: string, body: PreprocessAndMaskBody) {
+    const video = await this.findById(id);
+
+    const result = await this.frameMaskPipelineService.run({
+      datasetId: String(video.datasetId),
+      videoId: id,
+      pipelineRunId: body.pipelineRunId,
+      body,
+    });
+
+    const assets = await this.frameAssetService.getVideoAssets(id);
+
+    return {
+      pipelineRun: result.pipelineRun,
+      total: result.total,
+      selectedCount: result.selectedCount,
+      rejectedCount: result.rejectedCount,
+      images: result.images,
+      rawImages: assets.rawImages,
+      processedImages: assets.processedImages,
+      masks: assets.masks,
+      totalRawImages: assets.totalRawImages,
+      totalProcessedImages: assets.totalProcessedImages,
+      totalMasks: assets.totalMasks,
     };
   }
 }

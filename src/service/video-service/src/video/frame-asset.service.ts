@@ -163,32 +163,37 @@ export class FrameAssetService {
   async getVideoAssets(videoId: string) {
     const result = await this.databaseService.query(
       `SELECT
-         f.id,
-         f.dataset_id,
-         f.video_id,
-         f.frame_index,
-         f.timestamp_ms,
-         f.width,
-         f.height,
-         f.blur_score,
-         f.noise_score,
-         f.is_selected,
-         f.rejected_reason,
-         f.raw_storage_file_id,
-         f.processed_storage_file_id,
-         f.mask_storage_file_id,
-         raw_sf.bucket AS raw_bucket,
-         raw_sf.object_path AS raw_object_path,
-         processed_sf.bucket AS processed_bucket,
-         processed_sf.object_path AS processed_object_path,
-         mask_sf.bucket AS mask_bucket,
-         mask_sf.object_path AS mask_object_path
-       FROM frames f
-       LEFT JOIN storage_files raw_sf ON raw_sf.id = f.raw_storage_file_id
-       LEFT JOIN storage_files processed_sf ON processed_sf.id = f.processed_storage_file_id
-       LEFT JOIN storage_files mask_sf ON mask_sf.id = f.mask_storage_file_id
-       WHERE f.video_id = $1
-       ORDER BY f.frame_index ASC`,
+       f.id,
+       f.dataset_id,
+       f.video_id,
+       f.frame_index,
+       f.timestamp_ms,
+       f.width,
+       f.height,
+       f.blur_score,
+       f.noise_score,
+       f.is_selected,
+       f.rejected_reason,
+
+       f.raw_storage_file_id,
+       f.processed_storage_file_id,
+       f.mask_storage_file_id,
+
+       raw_sf.bucket AS raw_bucket,
+       raw_sf.object_path AS raw_object_path,
+
+       processed_sf.bucket AS processed_bucket,
+       processed_sf.object_path AS processed_object_path,
+
+       mask_sf.bucket AS mask_bucket,
+       mask_sf.object_path AS mask_object_path
+
+     FROM frames f
+     LEFT JOIN storage_files raw_sf ON raw_sf.id = f.raw_storage_file_id
+     LEFT JOIN storage_files processed_sf ON processed_sf.id = f.processed_storage_file_id
+     LEFT JOIN storage_files mask_sf ON mask_sf.id = f.mask_storage_file_id
+     WHERE f.video_id = $1
+     ORDER BY f.frame_index ASC`,
       [videoId],
     );
 
@@ -222,34 +227,82 @@ export class FrameAssetService {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             objectPath: row.raw_object_path,
           }),
-          processed: row.processed_storage_file_id
-            ? await this.createSignedAsset({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                storageFileId: row.processed_storage_file_id,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                bucket: row.processed_bucket,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                objectPath: row.processed_object_path,
-              })
-            : null,
-          mask: row.mask_storage_file_id
-            ? await this.createSignedAsset({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                storageFileId: row.mask_storage_file_id,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                bucket: row.mask_bucket,
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                objectPath: row.mask_object_path,
-              })
-            : null,
         })),
     );
 
-    const processedImages = rawImages.filter((item) => item.processed);
-    const masks = rawImages.filter((item) => item.mask);
+    const processedImages = await Promise.all(
+      result.rows
+        .filter((row) => row.processed_storage_file_id)
+        .map(async (row) => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          id: row.id,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          frameIndex: row.frame_index,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          timestampMs: row.timestamp_ms,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          width: row.width,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          height: row.height,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          blurScore: row.blur_score,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          noiseScore: row.noise_score,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          isSelected: row.is_selected,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          rejectedReason: row.rejected_reason,
+          processed: await this.createSignedAsset({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            storageFileId: row.processed_storage_file_id,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            bucket: row.processed_bucket,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            objectPath: row.processed_object_path,
+          }),
+        })),
+    );
+
+    const masks = await Promise.all(
+      result.rows
+        .filter((row) => row.mask_storage_file_id)
+        .map(async (row) => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          id: row.id,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          frameIndex: row.frame_index,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          timestampMs: row.timestamp_ms,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          width: row.width,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          height: row.height,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          blurScore: row.blur_score,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          noiseScore: row.noise_score,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          isSelected: row.is_selected,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          rejectedReason: row.rejected_reason,
+          mask: await this.createSignedAsset({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            storageFileId: row.mask_storage_file_id,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            bucket: row.mask_bucket,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            objectPath: row.mask_object_path,
+          }),
+        })),
+    );
 
     return {
       videoId,
+      folders: {
+        rawImages,
+        processedImages,
+        masks,
+      },
       rawImages,
       processedImages,
       masks,
