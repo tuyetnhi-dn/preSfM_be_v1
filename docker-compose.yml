@@ -97,6 +97,7 @@ services:
       STORAGE_SERVICE_URL: http://storage-service:8004
       MASK_GENERATION_SERVICE_URL: http://mask-generation-service:8002
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
+      OPENSFM_SERVICE_URL: http://opensfm-service:8005
     ports:
       - '8003:8003'
     depends_on:
@@ -138,15 +139,18 @@ services:
     container_name: presfm-opensfm-service
     environment:
       PORT: 8005
-      POSTGRES_HOST: ${POSTGRES_HOST}
-      POSTGRES_PORT: ${POSTGRES_PORT}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_SSL: ${POSTGRES_SSL}
-      OPENSFM_WORKER_URL: ${OPENSFM_WORKER_URL:-}
+      STORAGE_SERVICE_URL: http://storage-service:8004
+      SUPABASE_DEFAULT_BUCKET: ${SUPABASE_DEFAULT_BUCKET:-presfm}
+      OPENSFM_WORKSPACE: /workspace/opensfm-runs
+      OPENSFM_BIN: /opt/OpenSfM/bin/opensfm
+      OPENSFM_ROOT: /opt/OpenSfM
+    volumes:
+      - opensfm-workspace:/workspace/opensfm-runs
     ports:
       - '8005:8005'
+    depends_on:
+      storage-service:
+        condition: service_started
     networks:
       - presfm-network
 
@@ -197,6 +201,7 @@ services:
 
 volumes:
   presfm-storage-data:
+  opensfm-workspace:
 
 networks:
   presfm-network:

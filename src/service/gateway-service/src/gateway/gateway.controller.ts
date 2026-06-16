@@ -150,6 +150,16 @@ export class GatewayController {
     });
   }
 
+  @Post('videos/:id/run-opensfm-comparison')
+  runOpenSfMComparison(@Param('id') id: string, @Body() body: unknown) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}/run-opensfm-comparison`,
+      method: 'POST',
+      body,
+    });
+  }
+
   @Get('videos/:id')
   findVideo(@Param('id') id: string) {
     return this.gatewayService.jsonRequest({

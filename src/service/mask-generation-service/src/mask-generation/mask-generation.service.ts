@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { calculateImageQuality } from './image-preprocessor';
 import sharp from 'sharp';
+import { calculateImageQuality } from './image-preprocessor';
 
 export type RawFrameInput = {
   frameId: string;
@@ -43,8 +43,8 @@ export class MaskGenerationService {
     selectedCount: number;
     rejectedCount: number;
   }> {
-    const blurThreshold = Number(input.config?.blurThreshold ?? 150);
-    const noiseThreshold = Number(input.config?.noiseThreshold ?? 10);
+    const blurThreshold = Number(input.config?.blurThreshold ?? 100);
+    const noiseThreshold = Number(input.config?.noiseThreshold ?? 25);
 
     const outputProcessedFolder =
       input.config?.outputProcessedFolder ?? 'processed_images';
@@ -125,6 +125,17 @@ export class MaskGenerationService {
       '0',
     )}`;
 
+    let maskBuffer = await this.callSegmentationModel({
+      imageBuffer: rawFile.buffer,
+      imageName,
+      mimeType: rawFile.mimeType,
+      extension: rawFile.extension,
+    });
+
+    if (!maskBuffer) {
+      maskBuffer = await this.createEmptyModelMask(rawFile.buffer);
+    }
+
     const processedPath = this.buildObjectPath({
       datasetId: input.datasetId,
       videoId: input.videoId,
@@ -141,17 +152,6 @@ export class MaskGenerationService {
       objectPath: processedPath,
       datasetId: input.datasetId,
     });
-
-    let maskBuffer = await this.callSegmentationModel({
-      imageBuffer: rawFile.buffer,
-      imageName,
-      mimeType: rawFile.mimeType,
-      extension: rawFile.extension,
-    });
-
-    if (!maskBuffer) {
-      maskBuffer = await this.createEmptyMaskFromImage(rawFile.buffer);
-    }
 
     const maskPath = this.buildObjectPath({
       datasetId: input.datasetId,
@@ -180,27 +180,6 @@ export class MaskGenerationService {
       processedStorageFileId: uploadedProcessed.id,
       maskStorageFileId: uploadedMask.id,
     };
-  }
-
-  private async createEmptyMaskFromImage(imageBuffer: Buffer): Promise<Buffer> {
-    const metadata = await sharp(imageBuffer).metadata();
-
-    if (!metadata.width || !metadata.height) {
-      throw new InternalServerErrorException(
-        'Cannot create empty mask because image size is unknown',
-      );
-    }
-
-    return sharp({
-      create: {
-        width: metadata.width,
-        height: metadata.height,
-        channels: 3,
-        background: { r: 0, g: 0, b: 0 },
-      },
-    })
-      .png()
-      .toBuffer();
   }
 
   private async callSegmentationModel(input: {
@@ -241,7 +220,36 @@ export class MaskGenerationService {
 
     const arrayBuffer = await response.arrayBuffer();
 
+    if (arrayBuffer.byteLength === 0) {
+      return null;
+    }
+
     return Buffer.from(arrayBuffer);
+  }
+
+  private async createEmptyModelMask(imageBuffer: Buffer): Promise<Buffer> {
+    const metadata = await sharp(imageBuffer).metadata();
+
+    if (!metadata.width || !metadata.height) {
+      throw new InternalServerErrorException(
+        'Cannot create empty mask because image size is unknown',
+      );
+    }
+
+    return sharp({
+      create: {
+        width: metadata.width,
+        height: metadata.height,
+        channels: 3,
+        background: {
+          r: 0,
+          g: 0,
+          b: 0,
+        },
+      },
+    })
+      .png()
+      .toBuffer();
   }
 
   private async downloadStorageFile(storageFileId: string): Promise<{

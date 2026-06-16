@@ -15,6 +15,7 @@ import { VideoService } from './video.service';
 
 import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 import type { CreatePipelineBody } from '../type/pipline.type';
+import type { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
 
 @Controller('videos')
 export class VideoController {
@@ -49,6 +50,14 @@ export class VideoController {
     @Body() body: PreprocessAndMaskBody,
   ) {
     return this.videoService.preprocessAndGenerateMasks(id, body);
+  }
+
+  @Post(':id/run-opensfm-comparison')
+  runOpenSfMComparison(
+    @Param('id') id: string,
+    @Body() body: RunOpenSfMComparisonBody,
+  ) {
+    return this.videoService.runOpenSfMComparison(id, body);
   }
 
   @Get(':id')

@@ -10,6 +10,8 @@ import type { CreatePipelineBody, PipelineType } from '../type/pipline.type';
 import { FrameAssetService } from './frame-asset.service';
 import { FrameMaskPipelineService } from './frame-mask-pipeline.service';
 import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
+import { OpenSfMComparisonService } from './opensfm-comparison.service';
+import { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
 
 type UploadBody = {
   datasetId?: string;
@@ -51,6 +53,7 @@ export class VideoService {
     private readonly configService: ConfigService,
     private readonly frameAssetService: FrameAssetService,
     private readonly frameMaskPipelineService: FrameMaskPipelineService,
+    private readonly openSfMComparisonService: OpenSfMComparisonService,
   ) {}
 
   private async createProject(
@@ -432,5 +435,17 @@ export class VideoService {
       totalProcessedImages: assets.totalProcessedImages,
       totalMasks: assets.totalMasks,
     };
+  }
+  async runOpenSfMComparison(id: string, body: RunOpenSfMComparisonBody) {
+    const video = await this.findById(id);
+    const assets = await this.frameAssetService.getVideoAssets(id);
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return this.openSfMComparisonService.compare({
+      datasetId: String(video.datasetId),
+      videoId: id,
+      assets,
+      runDense: body.runDense ?? true,
+    });
   }
 }
