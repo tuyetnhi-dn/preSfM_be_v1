@@ -21,11 +21,17 @@ import type {
 } from '../type/run-full-pipeline.type';
 import { FrameExtractorService } from './frame-extractor.service';
 import { FullPipelineQueueService } from './full-pipeline-queue.service';
+import { ProjectVisibility } from '../project/project-list.type';
+import { UploadBody } from '../type/upload-video.type';
 
-type UploadBody = {
-  datasetId?: string;
-  uploadedBy?: string;
-  projectName?: string;
+const parsePage = (value: string | undefined): number => {
+  const page = Number(value);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+};
+
+const parseLimit = (value: string | undefined): number => {
+  const limit = Number(value);
+  return Number.isFinite(limit) && limit > 0 && limit <= 100 ? limit : 10;
 };
 
 type StorageUploadResponse = {
@@ -43,6 +49,9 @@ type DatasetRow = {
   project_id: string;
   name: string;
   status: string;
+  project_name?: string | null;
+  project_description?: string | null;
+  project_visibility?: ProjectVisibility | null;
 };
 
 type PipelineRunRow = {
@@ -66,46 +75,102 @@ export class VideoService {
     private readonly frameExtractorService: FrameExtractorService,
     private readonly fullPipelineQueueService: FullPipelineQueueService,
   ) {}
-
-  private async createProject(
-    userId?: string,
-    projectName?: string,
-  ): Promise<{
-    id: string;
-    name: string;
-  }> {
-    const name =
-      projectName?.trim() ||
-      `Project ${new Date().toISOString().slice(0, 10)} ${randomUUID().slice(0, 6)}`;
-
-    const result = await this.databaseService.query(
-      `INSERT INTO projects(user_id, name, status)
-       VALUES ($1, $2, 'active')
-       RETURNING id, name`,
-      [userId ?? null, name],
-    );
-
-    return result.rows[0] as { id: string; name: string };
+  private normalizeOptionalText(value: unknown) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 
-  private async createDataset(
-    userId?: string,
-    projectName?: string,
-  ): Promise<DatasetRow> {
-    const project = await this.createProject(userId, projectName);
+  private normalizeProjectVisibility(value: unknown): ProjectVisibility {
+    return value === 'public' ? 'public' : 'private';
+  }
 
-    const name = `Dataset ${new Date().toISOString().slice(0, 10)}`;
+  private async createProject(input: {
+    userId?: string;
+    projectName?: string;
+    description?: string;
+    visibility?: string;
+  }): Promise<{
+    id: string;
+    name: string;
+    description: string | null;
+    visibility: ProjectVisibility;
+  }> {
+    const name =
+      this.normalizeOptionalText(input.projectName) ||
+      `Project ${new Date().toISOString().slice(0, 10)} ${randomUUID().slice(0, 6)}`;
+
+    const description = this.normalizeOptionalText(input.description);
+    const visibility = this.normalizeProjectVisibility(input.visibility);
 
     const result = await this.databaseService.query(
-      `INSERT INTO datasets(project_id, name, status,
-                            raw_frame_count, selected_frame_count,
-                            rejected_frame_count, mask_count)
-       VALUES ($1, $2, 'created', 0, 0, 0, 0)
-       RETURNING id, project_id, name, status`,
+      `
+    INSERT INTO projects (
+      user_id,
+      name,
+      description,
+      visibility,
+      status,
+      created_at,
+      updated_at
+    )
+    VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+    RETURNING id, name, description, visibility
+    `,
+      [input.userId ?? null, name, description, visibility],
+    );
+
+    return result.rows[0] as {
+      id: string;
+      name: string;
+      description: string | null;
+      visibility: ProjectVisibility;
+    };
+  }
+
+  private async createDataset(input: {
+    userId?: string;
+    projectName?: string;
+    description?: string;
+    visibility?: string;
+    datasetName?: string;
+  }): Promise<DatasetRow> {
+    const project = await this.createProject({
+      userId: input.userId,
+      projectName: input.projectName,
+      description: input.description,
+      visibility: input.visibility,
+    });
+
+    const name =
+      this.normalizeOptionalText(input.datasetName) ||
+      `Dataset ${new Date().toISOString().slice(0, 10)}`;
+
+    const result = await this.databaseService.query(
+      `
+    INSERT INTO datasets (
+      project_id,
+      name,
+      status,
+      raw_frame_count,
+      selected_frame_count,
+      rejected_frame_count,
+      mask_count,
+      created_at,
+      updated_at
+    )
+    VALUES ($1, $2, 'created', 0, 0, 0, 0, NOW(), NOW())
+    RETURNING id, project_id, name, status
+    `,
       [project.id, name],
     );
 
-    return result.rows[0] as DatasetRow;
+    const dataset = result.rows[0] as DatasetRow;
+
+    return {
+      ...dataset,
+      project_name: project.name,
+      project_description: project.description,
+      project_visibility: project.visibility,
+    };
   }
 
   async upload(file: Express.Multer.File, body: UploadBody) {
@@ -123,7 +188,13 @@ export class VideoService {
 
     const dataset = body.datasetId
       ? await this.getDataset(body.datasetId)
-      : await this.createDataset(body.uploadedBy, body.projectName);
+      : await this.createDataset({
+          userId: body.uploadedBy,
+          projectName: body.projectName,
+          description: body.description,
+          visibility: body.visibility,
+          datasetName: body.datasetName,
+        });
 
     const extension = this.fileExtension(decodedName);
     const objectPath = `projects/${dataset.project_id}/datasets/${dataset.id}/videos/${randomUUID()}${extension}`;
@@ -152,6 +223,19 @@ export class VideoService {
       ...this.mapVideo(result.rows[0]),
       projectId: dataset.project_id,
       datasetId: dataset.id,
+      project: {
+        id: dataset.project_id,
+        name: dataset.project_name ?? body.projectName ?? null,
+        description: dataset.project_description ?? body.description ?? null,
+        visibility:
+          dataset.project_visibility ??
+          this.normalizeProjectVisibility(body.visibility),
+      },
+      dataset: {
+        id: dataset.id,
+        name: dataset.name,
+        status: dataset.status,
+      },
       storageFile: {
         ...storageFile,
         originalName: decodedName,
@@ -269,7 +353,20 @@ export class VideoService {
 
   private async getDataset(datasetId: string): Promise<DatasetRow> {
     const result = await this.databaseService.query(
-      `SELECT id, project_id, name, status FROM datasets WHERE id = $1`,
+      `
+    SELECT
+      d.id,
+      d.project_id,
+      d.name,
+      d.status,
+      p.name AS project_name,
+      p.description AS project_description,
+      p.visibility AS project_visibility
+    FROM datasets d
+    JOIN projects p ON p.id = d.project_id
+    WHERE d.id = $1
+    LIMIT 1
+    `,
       [datasetId],
     );
 
@@ -736,6 +833,8 @@ export class VideoService {
     SELECT
       p.id,
       p.name,
+      p.description,
+      p.visibility,
       p.status,
       p.created_at AS "createdAt",
       p.updated_at AS "updatedAt",
@@ -803,5 +902,89 @@ export class VideoService {
     }
 
     return this.getVideoAssets(project.videoId);
+  }
+  async listVideos(query: {
+    datasetId?: string;
+    projectId?: string;
+    userId?: string;
+    page?: string;
+    limit?: string;
+  }) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const offset = (page - 1) * limit;
+
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+
+    if (query.datasetId) {
+      values.push(query.datasetId);
+      conditions.push(`v.dataset_id = $${values.length}`);
+    }
+
+    if (query.projectId) {
+      values.push(query.projectId);
+      conditions.push(`d.project_id = $${values.length}`);
+    }
+
+    if (query.userId) {
+      values.push(query.userId);
+      conditions.push(`p.user_id = $${values.length}`);
+    }
+
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const countResult = await this.databaseService.query(
+      `
+    SELECT COUNT(*)::int AS total
+    FROM videos v
+    LEFT JOIN datasets d ON d.id = v.dataset_id
+    LEFT JOIN projects p ON p.id = d.project_id
+    ${whereClause}
+    `,
+      values,
+    );
+
+    const total = Number(countResult.rows[0]?.total ?? 0);
+
+    values.push(limit);
+    values.push(offset);
+
+    const limitIndex = values.length - 1;
+    const offsetIndex = values.length;
+
+    const result = await this.databaseService.query(
+      `
+    SELECT
+      v.id,
+      v.dataset_id AS "datasetId",
+      v.file_name AS "fileName",
+      v.status,
+      v.storage_file_id AS "storageFileId",
+      v.created_at AS "createdAt",
+      v.updated_at AS "updatedAt"
+    FROM videos v
+    LEFT JOIN datasets d ON d.id = v.dataset_id
+    LEFT JOIN projects p ON p.id = d.project_id
+    ${whereClause}
+    ORDER BY v.created_at DESC
+    LIMIT $${limitIndex}
+    OFFSET $${offsetIndex}
+    `,
+      values,
+    );
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items: result.rows,
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+    };
   }
 }

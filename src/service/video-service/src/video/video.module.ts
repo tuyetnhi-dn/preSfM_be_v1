@@ -12,7 +12,8 @@ import { FULL_PIPELINE_QUEUE } from '../pipeline/pipeline-queue.constants';
 import { FullPipelineQueueService } from './full-pipeline-queue.service';
 import { FullPipelineProcessor } from './full-pipeline.processor';
 import { VideoPipelineRunnerService } from './video-pipeline-runner.service';
-import { ProjectController } from './project.controller';
+import { ProjectController } from '../project/project.controller';
+import { ProjectService } from '../project/project.service';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ProjectController } from './project.controller';
   controllers: [VideoController, ProjectController],
   providers: [
     VideoService,
+    ProjectService,
     FrameAssetService,
     FrameExtractorService,
     FrameMaskPipelineService,

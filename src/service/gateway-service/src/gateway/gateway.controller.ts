@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-base-to-string */
 import {
   Body,
   Controller,
@@ -5,6 +6,7 @@ import {
   Get,
   Headers,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -219,6 +221,58 @@ export class GatewayController {
       service: 'video',
       path: `/projects/${projectId}/latest-pipeline`,
       method: 'GET',
+    });
+  }
+  @Get('projects')
+  listProjects(@Query() query: Record<string, unknown>) {
+    const searchParams = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null) {
+        searchParams.set(key, String(value));
+      }
+    }
+
+    const suffix = searchParams.toString();
+
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects${suffix ? `?${suffix}` : ''}`,
+      method: 'GET',
+    });
+  }
+
+  @Get('projects/:id')
+  getProjectofUserById(
+    @Param('id') id: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const searchParams = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null) {
+        searchParams.set(key, String(value));
+      }
+    }
+
+    const suffix = searchParams.toString();
+
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${id}${suffix ? `?${suffix}` : ''}`,
+      method: 'GET',
+    });
+  }
+  @Patch('projects/:id/visibility')
+  updateProjectVisibility(
+    @Param('id') id: string,
+    @Body() body: { visibility: 'public' | 'private' },
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${id}/visibility`,
+      method: 'PATCH',
+      body,
     });
   }
 

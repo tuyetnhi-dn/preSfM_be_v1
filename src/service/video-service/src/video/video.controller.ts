@@ -17,6 +17,7 @@ import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 import type { CreatePipelineBody } from '../type/pipline.type';
 import type { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
 import type { RunFullPipelineDto } from '../type/run-full-pipeline.type';
+import type { UploadBody } from '../type/upload-video.type';
 
 @Controller('videos')
 export class VideoController {
@@ -29,16 +30,13 @@ export class VideoController {
 
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
-  upload(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() body: { datasetId?: string; uploadedBy?: string },
-  ) {
+  upload(@UploadedFile() file: Express.Multer.File, @Body() body: UploadBody) {
     return this.videoService.upload(file, body);
   }
 
   @Get()
-  list(@Query('datasetId') datasetId?: string) {
-    return this.videoService.list(datasetId);
+  list(@Query() query: Record<string, string>) {
+    return this.videoService.listVideos(query);
   }
   @Get(':id/assets')
   assets(@Param('id') id: string) {
