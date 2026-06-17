@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import { VideoService } from '../video/video.service';
 import { ProjectService } from './project.service';
 import type { ProjectListQuery } from './project-list.type';
-import { UpdateVisibilityDto } from './updateVisibility.dto';
+// import { UpdateVisibilityDto } from './updateVisibility.dto';
 
 @Controller('projects')
 export class ProjectController {
@@ -28,8 +28,8 @@ export class ProjectController {
   @Patch(':id/visibility')
   updateVisibility(
     @Param('id') id: string,
-    @Body() body: UpdateVisibilityDto,
     @Query('userId') userId: string,
+    @Body() body: { visibility: 'public' | 'private' },
   ) {
     return this.projectService.updateVisibility({
       projectId: id,

@@ -64,6 +64,25 @@ type PipelineRunRow = {
   pipeline_type: string;
 };
 
+function buildSupabasePublicUrl(input: {
+  bucket?: string | null;
+  objectPath?: string | null;
+}) {
+  if (!input.bucket || !input.objectPath) return null;
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+
+  if (!supabaseUrl) return null;
+
+  const baseUrl = supabaseUrl.replace(/\/$/, '');
+
+  const encodedObjectPath = input.objectPath
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+  return `${baseUrl}/storage/v1/object/public/${input.bucket}/${encodedObjectPath}`;
+}
 @Injectable()
 export class VideoService {
   constructor(
@@ -888,8 +907,49 @@ export class VideoService {
   async getProjectAssets(projectId: string) {
     const project = await this.getProjectById(projectId);
 
-    if (!project.videoId) {
+    const videoResult = await this.databaseService.query(
+      `
+    SELECT
+      v.id,
+      v.dataset_id AS "datasetId",
+      COALESCE(v.original_name, sf.original_name) AS "originalName",
+      COALESCE(v.mime_type, sf.mime_type) AS "mimeType",
+      COALESCE(v.size_bytes, sf.size_bytes) AS "sizeBytes",
+      sf.bucket,
+      sf.object_path AS "objectPath"
+    FROM datasets d
+    JOIN videos v
+      ON v.dataset_id = d.id
+    LEFT JOIN storage_files sf
+      ON sf.id = v.storage_file_id
+    WHERE d.project_id = $1
+    ORDER BY v.created_at DESC NULLS LAST
+    LIMIT 1
+    `,
+      [projectId],
+    );
+
+    const videoRow = videoResult.rows[0];
+
+    const video = videoRow
+      ? {
+          id: videoRow.id,
+          datasetId: videoRow.datasetId,
+          originalName: videoRow.originalName ?? null,
+          mimeType: videoRow.mimeType ?? null,
+          sizeBytes: videoRow.sizeBytes ? Number(videoRow.sizeBytes) : null,
+          url: buildSupabasePublicUrl({
+            bucket: videoRow.bucket,
+            objectPath: videoRow.objectPath,
+          }),
+        }
+      : null;
+
+    const videoId = video?.id ?? project.videoId;
+
+    if (!videoId) {
       return {
+        video: null,
         rawImages: [],
         processedImages: [],
         masks: [],
@@ -901,7 +961,12 @@ export class VideoService {
       };
     }
 
-    return this.getVideoAssets(project.videoId);
+    const assets = await this.getVideoAssets(videoId);
+
+    return {
+      ...assets,
+      video,
+    };
   }
   async listVideos(query: {
     datasetId?: string;

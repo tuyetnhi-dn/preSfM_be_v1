@@ -264,13 +264,14 @@ export class GatewayController {
     });
   }
   @Patch('projects/:id/visibility')
-  updateProjectVisibility(
+  updateVisibility(
     @Param('id') id: string,
-    @Body() body: { visibility: 'public' | 'private' },
+    @Query('userId') userId: string,
+    @Body() body: { visibility?: 'public' | 'private' },
   ) {
     return this.gatewayService.jsonRequest({
       service: 'video',
-      path: `/projects/${id}/visibility`,
+      path: `/projects/${id}/visibility?userId=${userId}`,
       method: 'PATCH',
       body,
     });
