@@ -16,6 +16,7 @@ import { VideoService } from './video.service';
 import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 import type { CreatePipelineBody } from '../type/pipline.type';
 import type { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
+import type { RunFullPipelineDto } from '../type/run-full-pipeline.type';
 
 @Controller('videos')
 export class VideoController {
@@ -58,6 +59,16 @@ export class VideoController {
     @Body() body: RunOpenSfMComparisonBody,
   ) {
     return this.videoService.runOpenSfMComparison(id, body);
+  }
+
+  @Post(':id/run-full-pipeline')
+  startFullPipeline(@Param('id') id: string, @Body() body: RunFullPipelineDto) {
+    return this.videoService.startFullPipeline(id, body);
+  }
+
+  @Get('pipeline-runs/:pipelineRunId/status')
+  getPipelineRunStatus(@Param('pipelineRunId') pipelineRunId: string) {
+    return this.videoService.getPipelineRunStatus(pipelineRunId);
   }
 
   @Get(':id')

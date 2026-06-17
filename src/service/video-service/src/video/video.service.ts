@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   BadRequestException,
   Injectable,
@@ -11,7 +13,14 @@ import { FrameAssetService } from './frame-asset.service';
 import { FrameMaskPipelineService } from './frame-mask-pipeline.service';
 import type { PreprocessAndMaskBody } from '../type/preprocess-mask.type';
 import { OpenSfMComparisonService } from './opensfm-comparison.service';
-import { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
+import type { RunOpenSfMComparisonBody } from '../type/run-opensfm-comparison.type';
+import type {
+  PipelineRunStatusResponse,
+  RunFullPipelineDto,
+  RunFullPipelineResponse,
+} from '../type/run-full-pipeline.type';
+import { FrameExtractorService } from './frame-extractor.service';
+import { FullPipelineQueueService } from './full-pipeline-queue.service';
 
 type UploadBody = {
   datasetId?: string;
@@ -54,6 +63,8 @@ export class VideoService {
     private readonly frameAssetService: FrameAssetService,
     private readonly frameMaskPipelineService: FrameMaskPipelineService,
     private readonly openSfMComparisonService: OpenSfMComparisonService,
+    private readonly frameExtractorService: FrameExtractorService,
+    private readonly fullPipelineQueueService: FullPipelineQueueService,
   ) {}
 
   private async createProject(
@@ -232,7 +243,6 @@ export class VideoService {
       [id],
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     return this.frameAssetService.runFrameExtraction({
       video,
       pipelineRun: {
@@ -246,7 +256,6 @@ export class VideoService {
 
   async getVideoAssets(id: string) {
     await this.findById(id);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     return this.frameAssetService.getVideoAssets(id);
   }
 
@@ -413,7 +422,7 @@ export class VideoService {
   async preprocessAndGenerateMasks(id: string, body: PreprocessAndMaskBody) {
     const video = await this.findById(id);
 
-    const result = await this.frameMaskPipelineService.run({
+    const result = await this.frameMaskPipelineService.run(id, {
       datasetId: String(video.datasetId),
       videoId: id,
       pipelineRunId: body.pipelineRunId,
@@ -447,5 +456,352 @@ export class VideoService {
       assets,
       runDense: body.runDense ?? true,
     });
+  }
+
+  private async updatePipelineRun(input: {
+    pipelineRunId: string;
+    status: string;
+    progress: number;
+    currentStage?: string | null;
+    result?: Record<string, unknown> | null;
+    errorMessage?: string | null;
+    started?: boolean;
+    completed?: boolean;
+  }) {
+    await this.databaseService.query(
+      `
+    UPDATE pipeline_runs
+    SET status = $2,
+        progress = $3,
+        current_stage = COALESCE($4, current_stage),
+        result = COALESCE($5::jsonb, result),
+        error_message = $6,
+        started_at = CASE
+          WHEN $7 = true AND started_at IS NULL THEN NOW()
+          ELSE started_at
+        END,
+        completed_at = CASE
+          WHEN $8 = true THEN NOW()
+          ELSE completed_at
+        END,
+        updated_at = NOW()
+    WHERE id = $1
+    `,
+      [
+        input.pipelineRunId,
+        input.status,
+        input.progress,
+        input.currentStage ?? null,
+        input.result ? JSON.stringify(input.result) : null,
+        input.errorMessage ?? null,
+        input.started ?? false,
+        input.completed ?? false,
+      ],
+    );
+  }
+
+  private async markStepRunning(
+    pipelineRunId: string,
+    stepKey: string,
+    progress: number,
+  ) {
+    await this.databaseService.query(
+      `
+    UPDATE pipeline_steps
+    SET status = 'running',
+        progress = $3,
+        started_at = COALESCE(started_at, NOW()),
+        updated_at = NOW()
+    WHERE pipeline_run_id = $1
+      AND step_key = $2
+    `,
+      [pipelineRunId, stepKey, progress],
+    );
+  }
+
+  private async markStepCompleted(pipelineRunId: string, stepKey: string) {
+    await this.databaseService.query(
+      `
+    UPDATE pipeline_steps
+    SET status = 'completed',
+        progress = 100,
+        completed_at = NOW(),
+        updated_at = NOW()
+    WHERE pipeline_run_id = $1
+      AND step_key = $2
+    `,
+      [pipelineRunId, stepKey],
+    );
+  }
+
+  private async failRunningSteps(pipelineRunId: string, errorMessage: string) {
+    await this.databaseService.query(
+      `
+    UPDATE pipeline_steps
+    SET status = 'failed',
+        error_message = $2,
+        completed_at = NOW(),
+        updated_at = NOW()
+    WHERE pipeline_run_id = $1
+      AND status = 'running'
+    `,
+      [pipelineRunId, errorMessage],
+    );
+  }
+
+  async startFullPipeline(
+    videoId: string,
+    dto: RunFullPipelineDto,
+  ): Promise<RunFullPipelineResponse> {
+    const video = await this.findById(videoId);
+    const datasetId = String(video.datasetId);
+
+    if (!datasetId) {
+      throw new BadRequestException(`Video ${videoId} does not have datasetId`);
+    }
+
+    const pipelineRunId = randomUUID();
+
+    const config = {
+      sampleFps: dto.sampleFps ?? 2,
+      blurThreshold: dto.blurThreshold ?? 100,
+      noiseThreshold: dto.noiseThreshold ?? 25,
+      runDense: dto.runDense ?? true,
+      mode: dto.mode ?? 'balanced',
+      outputRawFolder: 'raw_images',
+      outputProcessedFolder: 'processed_images',
+      outputMaskFolder: 'masks',
+    };
+
+    await this.databaseService.query(
+      `
+    INSERT INTO pipeline_runs (
+      id,
+      dataset_id,
+      video_id,
+      pipeline_type,
+      status,
+      progress,
+      current_stage,
+      config,
+      created_at,
+      updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW(), NOW())
+    `,
+      [
+        pipelineRunId,
+        datasetId,
+        videoId,
+        'processed',
+        'pending',
+        0,
+        'queued',
+        JSON.stringify(config),
+      ],
+    );
+
+    await this.createFullPipelineSteps(pipelineRunId);
+
+    await this.databaseService.query(
+      `
+      UPDATE videos
+      SET status = 'processing'
+      WHERE id = $1
+      `,
+      [videoId],
+    );
+
+    await this.databaseService.query(
+      `
+      UPDATE datasets
+      SET status = 'processing'
+      WHERE id = $1
+      `,
+      [datasetId],
+    );
+
+    const job = await this.fullPipelineQueueService.addRunFullPipelineJob({
+      videoId,
+      pipelineRunId,
+      dto,
+    });
+
+    return {
+      message: 'Pipeline queued',
+      videoId,
+      pipelineRunId,
+      jobId: String(job.id),
+    };
+  }
+
+  private async createFullPipelineSteps(pipelineRunId: string) {
+    const steps: [string, string][] = [
+      ['frame_extract', 'Extract frames from video'],
+      ['preprocessing', 'Filter blur/noise frames'],
+      ['mask_generation', 'Generate dynamic masks'],
+      ['opensfm_raw', 'Run OpenSfM raw flow'],
+      ['opensfm_processed', 'Run OpenSfM processed flow'],
+      ['evaluation', 'Compare reconstruction quality'],
+    ];
+
+    for (const [key, name] of steps) {
+      await this.databaseService.query(
+        `
+      INSERT INTO pipeline_steps (
+        pipeline_run_id,
+        step_key,
+        step_name,
+        status,
+        progress,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, 'pending', 0, NOW(), NOW())
+      ON CONFLICT(pipeline_run_id, step_key) DO NOTHING
+      `,
+        [pipelineRunId, key, name],
+      );
+    }
+  }
+
+  // private async updatePipelineRunProgress(
+  //   pipelineRunId: string,
+  //   status: string,
+  //   progress: number,
+  // ) {
+  //   await this.dbQuery(
+  //     `
+  //     UPDATE pipeline_runs
+  //     SET status = $2,
+  //         progress = $3,
+  //         updated_at = NOW()
+  //     WHERE id = $1
+  //   `,
+  //     [pipelineRunId, status, progress],
+  //   );
+  // }
+
+  async getPipelineRunStatus(
+    pipelineRunId: string,
+  ): Promise<PipelineRunStatusResponse> {
+    const result = await this.databaseService.query(
+      `
+    SELECT
+      id,
+      video_id AS "videoId",
+      dataset_id AS "datasetId",
+      status,
+      progress,
+      current_stage AS "currentStage",
+      config,
+      result,
+      error_message AS "errorMessage",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt",
+      started_at AS "startedAt",
+      completed_at AS "completedAt"
+    FROM pipeline_runs
+    WHERE id = $1
+    LIMIT 1
+    `,
+      [pipelineRunId],
+    );
+
+    const run = result.rows[0];
+
+    if (!run) {
+      throw new NotFoundException(`Pipeline run ${pipelineRunId} not found`);
+    }
+
+    return {
+      id: run.id,
+      videoId: run.videoId ?? null,
+      datasetId: run.datasetId ?? null,
+      status: run.status,
+      progress: run.progress ?? null,
+      currentStage: run.currentStage ?? null,
+      config: run.config ?? null,
+      result: run.result ?? null,
+      errorMessage: run.errorMessage ?? null,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      startedAt: run.startedAt ?? null,
+      completedAt: run.completedAt ?? null,
+    };
+  }
+  async getProjectById(projectId: string) {
+    const result = await this.databaseService.query(
+      `
+    SELECT
+      p.id,
+      p.name,
+      p.status,
+      p.created_at AS "createdAt",
+      p.updated_at AS "updatedAt",
+      d.id AS "datasetId",
+      v.id AS "videoId",
+      v.original_name AS "videoName"
+    FROM projects p
+    LEFT JOIN datasets d ON d.project_id = p.id
+    LEFT JOIN videos v ON v.dataset_id = d.id
+    WHERE p.id = $1
+    ORDER BY v.created_at DESC NULLS LAST
+    LIMIT 1
+    `,
+      [projectId],
+    );
+
+    if (!result.rows[0]) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return result.rows[0];
+  }
+  async getLatestProjectPipeline(projectId: string) {
+    const result = await this.databaseService.query(
+      `
+    SELECT
+      pr.id,
+      pr.video_id AS "videoId",
+      pr.dataset_id AS "datasetId",
+      pr.status,
+      pr.progress,
+      pr.current_stage AS "currentStage",
+      pr.config,
+      pr.result,
+      pr.error_message AS "errorMessage",
+      pr.created_at AS "createdAt",
+      pr.updated_at AS "updatedAt",
+      pr.started_at AS "startedAt",
+      pr.completed_at AS "completedAt"
+    FROM pipeline_runs pr
+    JOIN datasets d ON d.id = pr.dataset_id
+    WHERE d.project_id = $1
+    ORDER BY pr.created_at DESC
+    LIMIT 1
+    `,
+      [projectId],
+    );
+
+    return result.rows[0] ?? null;
+  }
+  async getProjectAssets(projectId: string) {
+    const project = await this.getProjectById(projectId);
+
+    if (!project.videoId) {
+      return {
+        rawImages: [],
+        processedImages: [],
+        masks: [],
+        folders: {
+          rawImages: [],
+          processedImages: [],
+          masks: [],
+        },
+      };
+    }
+
+    return this.getVideoAssets(project.videoId);
   }
 }

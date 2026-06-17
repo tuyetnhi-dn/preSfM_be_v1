@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  InternalServerErrorException,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 import {
   MaskGenerationFrameInput,
@@ -12,14 +8,33 @@ import {
 
 @Injectable()
 export class FrameMaskPipelineService {
+  preprocessAndGenerateMasks(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    videoId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    arg1: {
+      pipelineRunId: string;
+      config: {
+        blurThreshold: number;
+        noiseThreshold: number;
+        outputProcessedFolder: string;
+        outputMaskFolder: string;
+      };
+    },
+  ) {
+    throw new Error('Method not implemented.');
+  }
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async run(input: {
-    datasetId: string;
-    videoId: string;
-    pipelineRunId?: string;
-    body: PreprocessAndMaskBody;
-  }) {
+  async run(
+    videoId: string,
+    input: {
+      datasetId: string;
+      videoId: string;
+      pipelineRunId?: string;
+      body: PreprocessAndMaskBody;
+    },
+  ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const pipelineRunId =
       input.pipelineRunId ??
@@ -55,10 +70,17 @@ export class FrameMaskPipelineService {
       started_at: new Date().toISOString(),
     });
 
-    const frames = await this.getRawFrames(input.videoId);
+    // const frames = await this.getRawFrames(input.videoId);
 
-    if (frames.length === 0) {
-      throw new BadRequestException('No raw frames found for this video');
+    // if (frames.length === 0) {
+    //   throw new BadRequestException('No raw frames found for this video');
+    // }
+    const rawFrames = await this.getRawFramesByDatasetId(input.datasetId);
+
+    if (!rawFrames.length) {
+      throw new Error(
+        'No raw frames found for this dataset after frame extraction',
+      );
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -67,7 +89,14 @@ export class FrameMaskPipelineService {
       pipelineRunId,
       datasetId: input.datasetId,
       videoId: input.videoId,
-      frames,
+      frames: rawFrames.map((row) => ({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        frameId: row.id,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        frameIndex: Number(row.frameIndex),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        rawStorageFileId: row.storageFileId,
+      })),
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       body: input.body,
     });
@@ -146,6 +175,31 @@ export class FrameMaskPipelineService {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       rawStorageFileId: row.raw_storage_file_id,
     }));
+  }
+  private async getRawFramesByDatasetId(datasetId: string) {
+    const result = await this.databaseService.query(
+      `
+    SELECT
+      f.id,
+      f.dataset_id AS "datasetId",
+      f.frame_index AS "frameIndex",
+      f.timestamp_ms AS "timestampMs",
+      f.width,
+      f.height,
+      sf.id AS "storageFileId",
+      sf.object_path AS "objectPath",
+      sf.original_name AS "originalName",
+      sf.mime_type AS "mimeType"
+    FROM frames f
+    JOIN storage_files sf ON sf.id = f.raw_storage_file_id
+    WHERE f.dataset_id = $1
+      AND f.raw_storage_file_id IS NOT NULL
+    ORDER BY f.frame_index ASC
+    `,
+      [datasetId],
+    );
+
+    return result.rows;
   }
 
   private async callMaskGenerationService(input: {

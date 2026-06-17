@@ -9,19 +9,24 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { DatabaseService } from '../common/database/database.service';
 
-type ExtractInput = {
+export type ExtractInput = {
   pipelineRunId: string;
   pipelineType: string;
   datasetId: string;
   videoId: string;
+  sampleFps?: number;
   videoStorageFileId: string;
+  videoStoragePath: string;
+  videoStorageUrl: string | null;
   videoBucket: string;
   videoObjectPath: string;
   config: Record<string, unknown>;
 };
 
 type ExtractedFrame = {
+  frameId: string;
   frameIndex: number;
   timestampMs: number;
   width: number | null;
@@ -31,7 +36,49 @@ type ExtractedFrame = {
 
 @Injectable()
 export class FrameExtractorService {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly databaseService: DatabaseService,
+  ) {}
+  private async insertRawFrame(input: {
+    datasetId: string;
+    videoId: string;
+    frameIndex: number;
+    timestampMs: number;
+    width: number | null;
+    height: number | null;
+    rawStorageFileId: string;
+  }) {
+    const result = await this.databaseService.query(
+      `
+    INSERT INTO frames (
+      dataset_id,
+      video_id,
+      frame_index,
+      timestamp_ms,
+      width,
+      height,
+      raw_storage_file_id,
+      is_selected,
+      created_at,
+      updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+    RETURNING id
+    `,
+      [
+        input.datasetId,
+        input.videoId,
+        input.frameIndex,
+        input.timestampMs,
+        input.width,
+        input.height,
+        input.rawStorageFileId,
+      ],
+    );
+
+    return String(result.rows[0].id);
+  }
   private async downloadStorageFileById(
     storageFileId: string,
     outputPath: string,
@@ -130,14 +177,38 @@ export class FrameExtractorService {
           datasetId: input.datasetId,
         });
 
-        frames.push({
+        const timestampMs = Math.round((index / sampleFps) * 1000);
+
+        const frameId = await this.insertRawFrame({
+          datasetId: input.datasetId,
+          videoId: input.videoId,
           frameIndex: index,
-          timestampMs: Math.round((index / sampleFps) * 1000),
+          timestampMs,
+          width: metadata.width,
+          height: metadata.height,
+          rawStorageFileId: storageFile.id,
+        });
+
+        frames.push({
+          frameId,
+          frameIndex: index,
+          timestampMs,
           width: metadata.width,
           height: metadata.height,
           rawStorageFileId: storageFile.id,
         });
       }
+
+      await this.databaseService.query(
+        `
+  UPDATE datasets
+  SET raw_frame_count = $2,
+      selected_frame_count = $2,
+      updated_at = NOW()
+  WHERE id = $1
+  `,
+        [input.datasetId, frames.length],
+      );
 
       return { frames };
     } finally {

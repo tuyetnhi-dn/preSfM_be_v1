@@ -159,6 +159,24 @@ export class GatewayController {
       body,
     });
   }
+  @Post('videos/:id/run-full-pipeline')
+  startFullPipeline(@Param('id') id: string, @Body() body: unknown) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/${id}/run-full-pipeline`,
+      method: 'POST',
+      body,
+    });
+  }
+
+  @Get('videos/pipeline-runs/:pipelineRunId/status')
+  getPipelineRunStatus(@Param('pipelineRunId') pipelineRunId: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/videos/pipeline-runs/${pipelineRunId}/status`,
+      method: 'GET',
+    });
+  }
 
   @Get('videos/:id')
   findVideo(@Param('id') id: string) {
@@ -175,6 +193,32 @@ export class GatewayController {
       service: 'video',
       path: `/videos/${id}`,
       method: 'DELETE',
+    });
+  }
+  @Get('projects/:projectId')
+  getProjectById(@Param('projectId') projectId: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${projectId}`,
+      method: 'GET',
+    });
+  }
+
+  @Get('projects/:projectId/assets')
+  getProjectAssets(@Param('projectId') projectId: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${projectId}/assets`,
+      method: 'GET',
+    });
+  }
+
+  @Get('projects/:projectId/latest-pipeline')
+  getLatestProjectPipeline(@Param('projectId') projectId: string) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${projectId}/latest-pipeline`,
+      method: 'GET',
     });
   }
 

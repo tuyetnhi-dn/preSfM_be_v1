@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-base-to-string */
 import {
   BadRequestException,
   Injectable,
@@ -318,14 +319,33 @@ export class FrameAssetService {
     pipelineType: PipelineType;
     config: Record<string, unknown>;
   }) {
+    const videoObjectPath = input.video.objectPath;
+    const videoBucket = input.video.bucket;
+    const videoStorageFileId = input.video.storageFileId;
+
+    if (!videoObjectPath) {
+      throw new BadRequestException('Missing video object path');
+    }
+
+    if (!videoBucket) {
+      throw new BadRequestException('Missing video bucket');
+    }
+
+    if (!videoStorageFileId) {
+      throw new BadRequestException('Missing video storage file id');
+    }
+
     return this.frameExtractorService.extract({
       pipelineRunId: input.pipelineRun.id,
       pipelineType: input.pipelineType,
       datasetId: String(input.video.datasetId),
       videoId: String(input.video.id),
-      videoStorageFileId: String(input.video.storageFileId),
-      videoBucket: String(input.video.bucket),
-      videoObjectPath: String(input.video.objectPath),
+      sampleFps: Number(input.config.sampleFps ?? 2),
+      videoStorageFileId: String(videoStorageFileId),
+      videoStoragePath: String(videoObjectPath),
+      videoStorageUrl: null,
+      videoBucket: String(videoBucket),
+      videoObjectPath: String(videoObjectPath),
       config: input.config,
     });
   }

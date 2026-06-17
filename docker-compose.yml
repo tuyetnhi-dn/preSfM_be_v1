@@ -82,6 +82,14 @@ services:
     networks:
       - presfm-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: presfm-redis
+    ports:
+      - '6379:6379'
+    networks:
+      - presfm-network
+
   video-service:
     build:
       context: ./src/service/video-service
@@ -94,6 +102,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_SSL: ${POSTGRES_SSL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FULL_PIPELINE_CONCURRENCY: 1
       STORAGE_SERVICE_URL: http://storage-service:8004
       MASK_GENERATION_SERVICE_URL: http://mask-generation-service:8002
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
@@ -101,6 +112,8 @@ services:
     ports:
       - '8003:8003'
     depends_on:
+      redis:
+        condition: service_started
       storage-service:
         condition: service_started
       mask-generation-service:
