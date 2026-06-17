@@ -21,6 +21,7 @@ export type ProjectListItemDto = {
   name: string;
   description: string | null;
   visibility: ProjectVisibility;
+  coverImageUrl?: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;

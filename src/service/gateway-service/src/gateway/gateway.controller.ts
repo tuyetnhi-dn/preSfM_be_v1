@@ -276,6 +276,31 @@ export class GatewayController {
     });
   }
 
+  @Post('auth/forgot-password')
+  forgotPassword(@Body() body: { email?: string }) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/auth/forgot-password',
+      method: 'POST',
+      body,
+    });
+  }
+  @Post('auth/reset-password')
+  resetPassword(
+    @Body()
+    body: {
+      token?: string;
+      newPassword?: string;
+    },
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/auth/reset-password',
+      method: 'POST',
+      body,
+    });
+  }
+
   @Post('storage/upload')
   @UseInterceptors(FileInterceptor('file'))
   uploadStorage(

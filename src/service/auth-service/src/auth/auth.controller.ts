@@ -67,4 +67,38 @@ export class AuthController {
   me(@Headers('authorization') authorization?: string) {
     return this.authService.me(authorization);
   }
+  // Cập nhật và bổ sung vào AuthController
+
+  @Post('change-password')
+  async changePassword(
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: {
+      oldPassword?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    },
+  ) {
+    const token = this.authService['extractBearerToken'](authorization);
+    const payload = this.authService['tokenService'].verifyAccessToken(token);
+    const userId = payload.sub;
+
+    return this.authService.changePassword(userId, body);
+  }
+
+  @Post('forgot-password')
+  forgotPassword(@Body() body: { email?: string; locale?: string }) {
+    return this.authService.forgotPassword(body);
+  }
+
+  @Post('reset-password')
+  resetPassword(
+    @Body()
+    body: {
+      token?: string;
+      newPassword?: string;
+    },
+  ) {
+    return this.authService.resetPassword(body);
+  }
 }

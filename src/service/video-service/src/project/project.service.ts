@@ -31,6 +31,26 @@ function parseLimit(value?: string) {
   return Math.min(Math.floor(limit), MAX_LIMIT);
 }
 
+function buildSupabasePublicUrl(input: {
+  bucket?: string | null;
+  objectPath?: string | null;
+}) {
+  if (!input.bucket || !input.objectPath) return null;
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+
+  if (!supabaseUrl) return null;
+
+  const baseUrl = supabaseUrl.replace(/\/$/, '');
+
+  const encodedObjectPath = input.objectPath
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+  return `${baseUrl}/storage/v1/object/public/${input.bucket}/${encodedObjectPath}`;
+}
+
 @Injectable()
 export class ProjectService {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -84,6 +104,10 @@ export class ProjectService {
         p.status,
         p.created_at AS "createdAt",
         p.updated_at AS "updatedAt",
+
+        cover_file.bucket AS "coverImageBucket",
+        cover_file.object_path AS "coverImageObjectPath",
+
         latest.id AS "latestPipelineId",
         latest.status AS "latestPipelineStatus",
         latest.progress AS "latestPipelineProgress",
@@ -91,6 +115,31 @@ export class ProjectService {
         latest.created_at AS "latestPipelineCreatedAt",
         latest.updated_at AS "latestPipelineUpdatedAt"
       FROM projects p
+
+LEFT JOIN LATERAL (
+  SELECT
+    COALESCE(processed_file.bucket, raw_file.bucket) AS bucket,
+    COALESCE(processed_file.object_path, raw_file.object_path) AS object_path
+  FROM datasets d
+  JOIN frames f
+    ON f.dataset_id = d.id
+
+  LEFT JOIN storage_files processed_file
+    ON processed_file.id = f.processed_storage_file_id
+
+  LEFT JOIN storage_files raw_file
+    ON raw_file.id = f.raw_storage_file_id
+
+  WHERE d.project_id = p.id
+    AND (
+      processed_file.object_path IS NOT NULL
+      OR raw_file.object_path IS NOT NULL
+    )
+
+  ORDER BY f.frame_index ASC
+  LIMIT 1
+) cover_file ON true
+
       LEFT JOIN LATERAL (
         SELECT
           pr.id,
@@ -105,6 +154,7 @@ export class ProjectService {
         ORDER BY pr.created_at DESC
         LIMIT 1
       ) latest ON true
+
       ${whereClause}
       ORDER BY p.created_at DESC
       LIMIT $${limitIndex}
@@ -121,6 +171,12 @@ export class ProjectService {
       status: row.status,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+
+      coverImageUrl: buildSupabasePublicUrl({
+        bucket: row.coverImageBucket,
+        objectPath: row.coverImageObjectPath,
+      }),
+
       latestPipeline: row.latestPipelineId
         ? {
             id: row.latestPipelineId,
@@ -148,50 +204,81 @@ export class ProjectService {
   async getProjectofUserById(input: { projectId: string; userId?: string }) {
     const result = await this.databaseService.query(
       `
-    SELECT
-      p.id,
-      p.user_id AS "userId",
-      p.name,
-      p.description,
-      p.visibility,
-      p.status,
-
-      d.id AS "datasetId",
-      v.id AS "videoId",
-
-      p.created_at AS "createdAt",
-      p.updated_at AS "updatedAt",
-
-      latest.id AS "latestPipelineId",
-      latest.status AS "latestPipelineStatus",
-      latest.progress AS "latestPipelineProgress",
-      latest.current_stage AS "latestPipelineCurrentStage",
-      latest.created_at AS "latestPipelineCreatedAt",
-      latest.updated_at AS "latestPipelineUpdatedAt"
-    FROM projects p
-    LEFT JOIN datasets d
-      ON d.project_id = p.id
-    LEFT JOIN videos v
-      ON v.dataset_id = d.id
-    LEFT JOIN LATERAL (
       SELECT
-        pr.id,
-        pr.status,
-        pr.progress,
-        pr.current_stage,
-        pr.created_at,
-        pr.updated_at
-      FROM datasets d2
-      JOIN pipeline_runs pr
-        ON pr.dataset_id = d2.id
-      WHERE d2.project_id = p.id
-      ORDER BY pr.created_at DESC
+        p.id,
+        p.user_id AS "userId",
+        p.name,
+        p.description,
+        p.visibility,
+        p.status,
+
+        d.id AS "datasetId",
+        v.id AS "videoId",
+
+        p.created_at AS "createdAt",
+        p.updated_at AS "updatedAt",
+
+        cover_file.bucket AS "coverImageBucket",
+        cover_file.object_path AS "coverImageObjectPath",
+
+        latest.id AS "latestPipelineId",
+        latest.status AS "latestPipelineStatus",
+        latest.progress AS "latestPipelineProgress",
+        latest.current_stage AS "latestPipelineCurrentStage",
+        latest.created_at AS "latestPipelineCreatedAt",
+        latest.updated_at AS "latestPipelineUpdatedAt"
+      FROM projects p
+
+      LEFT JOIN datasets d
+        ON d.project_id = p.id
+
+      LEFT JOIN videos v
+        ON v.dataset_id = d.id
+
+LEFT JOIN LATERAL (
+  SELECT
+    COALESCE(processed_file.bucket, raw_file.bucket) AS bucket,
+    COALESCE(processed_file.object_path, raw_file.object_path) AS object_path
+  FROM datasets d3
+  JOIN frames f
+    ON f.dataset_id = d3.id
+
+  LEFT JOIN storage_files processed_file
+    ON processed_file.id = f.processed_storage_file_id
+
+  LEFT JOIN storage_files raw_file
+    ON raw_file.id = f.raw_storage_file_id
+
+  WHERE d3.project_id = p.id
+    AND (
+      processed_file.object_path IS NOT NULL
+      OR raw_file.object_path IS NOT NULL
+    )
+
+  ORDER BY f.frame_index ASC
+  LIMIT 1
+) cover_file ON true
+
+      LEFT JOIN LATERAL (
+        SELECT
+          pr.id,
+          pr.status,
+          pr.progress,
+          pr.current_stage,
+          pr.created_at,
+          pr.updated_at
+        FROM datasets d2
+        JOIN pipeline_runs pr
+          ON pr.dataset_id = d2.id
+        WHERE d2.project_id = p.id
+        ORDER BY pr.created_at DESC
+        LIMIT 1
+      ) latest ON true
+
+      WHERE p.id = $1
+      ORDER BY d.created_at DESC NULLS LAST, v.created_at DESC NULLS LAST
       LIMIT 1
-    ) latest ON true
-    WHERE p.id = $1
-    ORDER BY d.created_at DESC NULLS LAST, v.created_at DESC NULLS LAST
-    LIMIT 1
-    `,
+      `,
       [input.projectId],
     );
 
@@ -216,6 +303,11 @@ export class ProjectService {
       visibility: row.visibility,
       status: row.status,
 
+      coverImageUrl: buildSupabasePublicUrl({
+        bucket: row.coverImageBucket,
+        objectPath: row.coverImageObjectPath,
+      }),
+
       datasetId: row.datasetId ?? null,
       videoId: row.videoId ?? null,
 
@@ -234,6 +326,7 @@ export class ProjectService {
         : null,
     };
   }
+
   async updateVisibility(input: {
     projectId: string;
     userId: string;
@@ -252,11 +345,11 @@ export class ProjectService {
 
     await this.databaseService.query(
       `
-    UPDATE projects
-    SET visibility = $2,
-        updated_at = now()
-    WHERE id = $1
-    `,
+      UPDATE projects
+      SET visibility = $2,
+          updated_at = now()
+      WHERE id = $1
+      `,
       [input.projectId, input.visibility],
     );
 

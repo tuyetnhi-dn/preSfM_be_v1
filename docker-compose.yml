@@ -105,6 +105,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       FULL_PIPELINE_CONCURRENCY: 1
+      SUPABASE_URL: ${SUPABASE_URL}
       STORAGE_SERVICE_URL: http://storage-service:8004
       MASK_GENERATION_SERVICE_URL: http://mask-generation-service:8002
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
