@@ -43,7 +43,7 @@ export class MaskGenerationService {
     selectedCount: number;
     rejectedCount: number;
   }> {
-    const blurThreshold = Number(input.config?.blurThreshold ?? 100);
+    const blurThreshold = Number(input.config?.blurThreshold ?? 250);
     const noiseThreshold = Number(input.config?.noiseThreshold ?? 25);
 
     const outputProcessedFolder =

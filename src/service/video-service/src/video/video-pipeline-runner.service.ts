@@ -90,7 +90,7 @@ export class VideoPipelineRunnerService {
         body: {
           pipelineRunId,
           config: {
-            blurThreshold: dto.blurThreshold ?? 100,
+            blurThreshold: dto.blurThreshold ?? 250,
             noiseThreshold: dto.noiseThreshold ?? 25,
             outputProcessedFolder: 'processed_images',
             outputMaskFolder: 'masks',

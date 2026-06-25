@@ -680,7 +680,7 @@ export class VideoService {
 
     const config = {
       sampleFps: dto.sampleFps ?? 2,
-      blurThreshold: dto.blurThreshold ?? 100,
+      blurThreshold: dto.blurThreshold ?? 250,
       noiseThreshold: dto.noiseThreshold ?? 25,
       runDense: dto.runDense ?? true,
       mode: dto.mode ?? 'balanced',

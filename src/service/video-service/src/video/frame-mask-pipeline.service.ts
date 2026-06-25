@@ -230,7 +230,7 @@ export class FrameMaskPipelineService {
           frames: input.frames,
           config: {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            blurThreshold: Number(config.blurThreshold ?? 100),
+            blurThreshold: Number(config.blurThreshold ?? 250),
             // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             noiseThreshold: Number(config.noiseThreshold ?? 25),
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
