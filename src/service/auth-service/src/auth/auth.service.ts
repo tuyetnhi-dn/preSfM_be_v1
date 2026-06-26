@@ -68,6 +68,16 @@ export class AuthService {
     return { message: 'OTP đã được gửi tới email của bạn' };
   }
 
+  /**
+   * name
+   */
+  public getUserIdFromAuthorization(authorization?: string): string {
+    const token = this.extractBearerToken(authorization);
+    const payload = this.tokenService.verifyAccessToken(token);
+
+    return payload.sub;
+  }
+
   // ─── Register ───────────────────────────────────────────────────────────────
 
   /**
@@ -676,5 +686,48 @@ export class AuthService {
         'Không thể gửi email, vui lòng thử lại',
       );
     }
+  }
+  async updateProfile(
+    userId: string,
+    body: {
+      fullName?: string;
+    },
+  ) {
+    const fullName = (body.fullName ?? '').trim();
+
+    if (!fullName) {
+      throw new BadRequestException('Họ và tên là bắt buộc');
+    }
+
+    if (fullName.length > 100) {
+      throw new BadRequestException('Họ và tên không được vượt quá 100 ký tự');
+    }
+
+    const result = await this.databaseService.query(
+      `UPDATE users
+     SET full_name = $1
+     WHERE id = $2
+       AND status = 'active'
+     RETURNING id, email, full_name, role, status, created_at`,
+      [fullName, userId],
+    );
+
+    const user = result.rows[0] as Record<string, unknown> | undefined;
+
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại hoặc bị khóa');
+    }
+
+    return {
+      message: 'Cập nhật hồ sơ thành công',
+      user: {
+        id: user['id'],
+        email: user['email'],
+        fullName: user['full_name'],
+        role: user['role'],
+        status: user['status'],
+        createdAt: user['created_at'],
+      },
+    };
   }
 }

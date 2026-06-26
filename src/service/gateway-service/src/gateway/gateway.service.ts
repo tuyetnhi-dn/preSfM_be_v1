@@ -33,6 +33,7 @@ export class GatewayService {
     path: string;
     method: string;
     body?: unknown;
+    headers?: Record<string, string>;
     authorization?: string;
   }) {
     const headers: Record<string, string> = {
@@ -40,6 +41,9 @@ export class GatewayService {
     };
     if (input.authorization) {
       headers.authorization = input.authorization;
+    }
+    if (input.headers) {
+      Object.assign(headers, input.headers);
     }
     const response = await fetch(
       `${this.serviceUrl(input.service)}${input.path}`,

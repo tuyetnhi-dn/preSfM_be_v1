@@ -301,6 +301,44 @@ export class GatewayController {
       body,
     });
   }
+  @Post('auth/change-password')
+  changePassword(
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: {
+      oldPassword?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    },
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/auth/change-password',
+      method: 'POST',
+      authorization,
+      body,
+    });
+  }
+  @Patch('auth/profile')
+  updateProfile(
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: {
+      fullName?: string;
+    },
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/auth/profile',
+      method: 'PATCH',
+      headers: authorization
+        ? {
+            authorization,
+          }
+        : undefined,
+      body,
+    });
+  }
 
   @Post('storage/upload')
   @UseInterceptors(FileInterceptor('file'))

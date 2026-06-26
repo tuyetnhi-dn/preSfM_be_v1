@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Headers, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Patch,
+  Post,
+  Req,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
 
@@ -100,5 +108,17 @@ export class AuthController {
     },
   ) {
     return this.authService.resetPassword(body);
+  }
+  @Patch('profile')
+  updateProfile(
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: {
+      fullName?: string;
+    },
+  ) {
+    const userId = this.authService.getUserIdFromAuthorization(authorization);
+
+    return this.authService.updateProfile(userId, body);
   }
 }
