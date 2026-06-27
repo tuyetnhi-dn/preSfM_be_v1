@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -65,7 +66,7 @@ export class AuthService {
     // Gửi email
     await this.sendOtpEmail(email, otp, expiresMinutes);
 
-    return { message: 'OTP đã được gửi tới email của bạn' };
+    return { message: 'OTP has been sent to your email' };
   }
 
   /**
@@ -87,9 +88,11 @@ export class AuthService {
     const { password = '', otp = '', fullName } = body;
     const email = this.normalizeEmail(body.email);
 
-    if (!otp) throw new BadRequestException('OTP là bắt buộc');
+    if (!otp) throw new BadRequestException('OTP is required');
     if (password.length < 8) {
-      throw new BadRequestException('Mật khẩu phải có ít nhất 8 ký tự');
+      throw new BadRequestException(
+        'Password must be at least 8 characters long',
+      );
     }
 
     // Bước 1: Verify OTP từ DB
@@ -106,7 +109,7 @@ export class AuthService {
       )
       .catch((error: { code?: string }) => {
         if (error.code === '23505') {
-          throw new BadRequestException('Email đã được sử dụng');
+          throw new BadRequestException('Email has already been used');
         }
         throw error;
       });
@@ -116,7 +119,7 @@ export class AuthService {
 
     const user = result.rows[0] as Record<string, unknown>;
     return {
-      message: 'Đăng ký thành công',
+      message: 'Registration successful',
       user: {
         id: user['id'],
         email: user['email'],
@@ -147,7 +150,7 @@ export class AuthService {
       user['status'] !== 'active' ||
       !this.verifyPassword(body.password ?? '', user['password_hash'] as string)
     ) {
-      throw new UnauthorizedException('Email hoặc mật khẩu không chính xác');
+      throw new UnauthorizedException('Email or password is incorrect');
     }
 
     const accessToken = this.tokenService.createAccessToken({
@@ -193,7 +196,7 @@ export class AuthService {
 
   async refresh(refreshToken?: string) {
     if (!refreshToken) {
-      throw new UnauthorizedException('Refresh token là bắt buộc');
+      throw new UnauthorizedException('Refresh token is required');
     }
 
     const refreshTokenHash = this.tokenService.hashRefreshToken(refreshToken);
@@ -212,7 +215,7 @@ export class AuthService {
 
     if (!user || user['status'] !== 'active') {
       throw new UnauthorizedException(
-        'Refresh token không hợp lệ hoặc đã hết hạn',
+        'Refresh token is invalid or has expired',
       );
     }
 
@@ -269,7 +272,7 @@ export class AuthService {
     const user = result.rows[0] as Record<string, unknown> | undefined;
 
     if (!user || user['status'] !== 'active') {
-      throw new UnauthorizedException('Người dùng không tồn tại hoặc bị khóa');
+      throw new UnauthorizedException('User does not exist or is locked');
     }
 
     return {
@@ -315,7 +318,7 @@ export class AuthService {
       | undefined;
 
     if (!record) {
-      throw new BadRequestException('OTP không hợp lệ hoặc đã hết hạn');
+      throw new BadRequestException('OTP is invalid or has expired');
     }
 
     const inputHash = Buffer.from(this.hashOtp(otp), 'hex');
@@ -416,11 +419,11 @@ export class AuthService {
   `,
       });
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      this.logger.log(`[SMTP] Gửi thành công: ${info.messageId}`);
+      this.logger.log(`[SMTP] Send completed: ${info.messageId}`);
     } catch (error) {
-      this.logger.error(`[SMTP] Lỗi gửi mail tới ${email}`, error);
+      this.logger.error(`[SMTP] Error sending email to ${email}`, error);
       throw new InternalServerErrorException(
-        'Không thể gửi email, vui lòng thử lại',
+        'Cannot send email, please try again',
       );
     }
   }
@@ -451,7 +454,7 @@ export class AuthService {
   private normalizeEmail(email?: string): string {
     const normalized = (email ?? '').trim().toLowerCase();
     if (!normalized.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
-      throw new BadRequestException('Email không hợp lệ');
+      throw new BadRequestException('Email is invalid');
     }
     return normalized;
   }
@@ -459,7 +462,7 @@ export class AuthService {
   private extractBearerToken(authorization?: string): string {
     const value = authorization ?? '';
     if (!value.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Bearer token là bắt buộc');
+      throw new UnauthorizedException('Bearer token is required');
     }
     return value.slice(7);
   }
@@ -476,10 +479,12 @@ export class AuthService {
     const { oldPassword = '', newPassword = '', confirmPassword = '' } = body;
 
     if (newPassword.length < 8) {
-      throw new BadRequestException('Mật khẩu mới phải có ít nhất 8 ký tự');
+      throw new BadRequestException(
+        'New password must be at least 8 characters long',
+      );
     }
     if (newPassword !== confirmPassword) {
-      throw new BadRequestException('Mật khẩu xác nhận không khớp');
+      throw new BadRequestException('Password confirmation does not match');
     }
 
     // 1. Lấy thông tin user hiện tại
@@ -490,12 +495,12 @@ export class AuthService {
     const user = result.rows[0] as Record<string, unknown> | undefined;
 
     if (!user) {
-      throw new UnauthorizedException('Người dùng không tồn tại hoặc bị khóa');
+      throw new UnauthorizedException('User does not exist or is locked');
     }
 
     // 2. Kiểm tra mật khẩu cũ
     if (!this.verifyPassword(oldPassword, user['password_hash'] as string)) {
-      throw new BadRequestException('Mật khẩu cũ không chính xác');
+      throw new BadRequestException('Old password is incorrect');
     }
 
     // 3. Cập nhật mật khẩu mới
@@ -511,7 +516,7 @@ export class AuthService {
       [userId],
     );
 
-    return { message: 'Đổi mật khẩu thành công, vui lòng đăng nhập lại' };
+    return { message: 'Password changed successfully, please log in again' };
   }
 
   // ─── Forgot Password ─────────────────────────────────────────────────────────
@@ -534,7 +539,7 @@ export class AuthService {
 
     if (!user || user['status'] !== 'active') {
       throw new BadRequestException(
-        'Email không tồn tại hoặc tài khoản bị khóa',
+        'Email does not exist or account is locked',
       );
     }
 
@@ -568,7 +573,7 @@ export class AuthService {
 
     await this.sendResetPasswordEmail(email, resetLink, expiresMinutes);
 
-    return { message: 'Link khôi phục mật khẩu đã được gửi đến email của bạn' };
+    return { message: 'Reset password link has been sent to your email' };
   }
 
   // ─── Reset Password ──────────────────────────────────────────────────────────
@@ -576,9 +581,11 @@ export class AuthService {
   async resetPassword(body: { token?: string; newPassword?: string }) {
     const { token = '', newPassword = '' } = body;
 
-    if (!token) throw new BadRequestException('Token không hợp lệ');
+    if (!token) throw new BadRequestException('Token is invalid');
     if (newPassword.length < 8) {
-      throw new BadRequestException('Mật khẩu mới phải có ít nhất 8 ký tự');
+      throw new BadRequestException(
+        'New password must be at least 8 characters long',
+      );
     }
 
     const tokenHash = this.hashResetToken(token);
@@ -595,9 +602,7 @@ export class AuthService {
     const record = result.rows[0] as { id: string; email: string } | undefined;
 
     if (!record) {
-      throw new BadRequestException(
-        'Link khôi phục không hợp lệ hoặc đã hết hạn',
-      );
+      throw new BadRequestException('Reset link is invalid or has expired');
     }
 
     // 2. Hash password mới và cập nhật user
@@ -623,7 +628,7 @@ export class AuthService {
     );
 
     return {
-      message: 'Mật khẩu đã được đặt lại thành công. Bạn có thể đăng nhập.',
+      message: 'Password has been reset successfully. You can now log in.',
     };
   }
 
@@ -696,11 +701,11 @@ export class AuthService {
     const fullName = (body.fullName ?? '').trim();
 
     if (!fullName) {
-      throw new BadRequestException('Họ và tên là bắt buộc');
+      throw new BadRequestException('Full name is required');
     }
 
     if (fullName.length > 100) {
-      throw new BadRequestException('Họ và tên không được vượt quá 100 ký tự');
+      throw new BadRequestException('Full name cannot exceed 100 characters');
     }
 
     const result = await this.databaseService.query(
@@ -715,11 +720,11 @@ export class AuthService {
     const user = result.rows[0] as Record<string, unknown> | undefined;
 
     if (!user) {
-      throw new UnauthorizedException('Người dùng không tồn tại hoặc bị khóa');
+      throw new UnauthorizedException('User does not exist or is locked');
     }
 
     return {
-      message: 'Cập nhật hồ sơ thành công',
+      message: 'Profile updated successfully',
       user: {
         id: user['id'],
         email: user['email'],
@@ -728,6 +733,44 @@ export class AuthService {
         status: user['status'],
         createdAt: user['created_at'],
       },
+    };
+  }
+  async requireManagerRole(authorization?: string) {
+    const userId = this.getUserIdFromAuthorization(authorization);
+
+    const result = await this.databaseService.query(
+      `SELECT id, email, full_name, role, status
+     FROM users
+     WHERE id = $1`,
+      [userId],
+    );
+
+    const user = result.rows[0] as
+      | {
+          id: string;
+          email: string;
+          full_name: string | null;
+          role: string;
+          status: string;
+        }
+      | undefined;
+
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User does not exist or is locked');
+    }
+
+    if (user.role !== 'admin' && user.role !== 'manager') {
+      throw new ForbiddenException(
+        'You do not have permission to access the management page',
+      );
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      role: user.role,
+      status: user.status,
     };
   }
 }

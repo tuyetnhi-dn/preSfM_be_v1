@@ -72,7 +72,12 @@ export class AuthController {
 
   /** Lấy thông tin user hiện tại từ accessToken */
   @Get('me')
-  me(@Headers('authorization') authorization?: string) {
+  getMe(@Headers('authorization') authorization: string | undefined) {
+    console.log('[AuthService] /auth/me authorization:', {
+      hasAuthorization: Boolean(authorization),
+      preview: authorization ? authorization.slice(0, 30) : null,
+    });
+
     return this.authService.me(authorization);
   }
   // Cập nhật và bổ sung vào AuthController

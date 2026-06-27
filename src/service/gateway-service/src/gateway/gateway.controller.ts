@@ -79,7 +79,7 @@ export class GatewayController {
   }
 
   @Get('auth/me')
-  me(@Headers('authorization') authorization?: string) {
+  getMe(@Headers('authorization') authorization: string | undefined) {
     return this.gatewayService.jsonRequest({
       service: 'auth',
       path: '/auth/me',
@@ -531,6 +531,88 @@ export class GatewayController {
       path: '/masks/generate',
       method: 'POST',
       body,
+    });
+  }
+  @Get('admin/stats')
+  getAdminStats(@Headers('authorization') authorization: string | undefined) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/admin/stats',
+      method: 'GET',
+      headers: authorization
+        ? {
+            authorization,
+          }
+        : undefined,
+    });
+  }
+
+  @Get('admin/users')
+  getAdminUsers(
+    @Headers('authorization') authorization: string | undefined,
+    @Query() query: Record<string, string>,
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/admin/users',
+      method: 'GET',
+      authorization,
+      query,
+    });
+  }
+
+  @Patch('admin/users/:id/status')
+  updateAdminUserStatus(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { status?: string },
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: `/admin/users/${id}/status`,
+      method: 'PATCH',
+      authorization,
+      body,
+    });
+  }
+  @Get('admin/users/:id')
+  getAdminUserDetail(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('id') id: string,
+    @Query() query: Record<string, string>,
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: `/admin/users/${id}`,
+      method: 'GET',
+      authorization,
+      query,
+    });
+  }
+
+  @Get('admin/projects/:id')
+  getAdminProjectDetail(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: `/admin/projects/${id}`,
+      method: 'GET',
+      authorization,
+    });
+  }
+  @Get('admin/projects')
+  getAdminProjects(
+    @Headers('authorization') authorization: string | undefined,
+    @Query() query: Record<string, string>,
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'auth',
+      path: '/admin/projects',
+      method: 'GET',
+      authorization,
+      query,
     });
   }
 }

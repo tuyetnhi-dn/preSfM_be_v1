@@ -22,10 +22,33 @@ export class GatewayService {
       opensfm: 'http://opensfm-service:8005',
       evaluation: 'http://evaluation-service:8006',
     };
+
     const envKey = `${key.toUpperCase()}_SERVICE_URL`;
+
     return this.configService
       .get<string>(envKey, defaults[key])
       .replace(/\/$/, '');
+  }
+
+  private buildUrl(input: {
+    service: ServiceKey;
+    path: string;
+    query?: Record<string, string | number | boolean | undefined | null>;
+  }) {
+    const baseUrl = this.serviceUrl(input.service);
+    const url = new URL(input.path, baseUrl);
+
+    Object.entries(input.query ?? {}).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+
+      const normalizedValue = String(value).trim();
+
+      if (!normalizedValue) return;
+
+      url.searchParams.set(key, normalizedValue);
+    });
+
+    return url.toString();
   }
 
   async jsonRequest(input: {
@@ -35,25 +58,40 @@ export class GatewayService {
     body?: unknown;
     headers?: Record<string, string>;
     authorization?: string;
+    query?: Record<string, string | number | boolean | undefined | null>;
   }) {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
+      accept: 'application/json',
+      'cache-control': 'no-store',
+      pragma: 'no-cache',
     };
-    if (input.authorization) {
-      headers.authorization = input.authorization;
-    }
+
+    /**
+     * Giữ compatibility với code cũ:
+     * - Một số route truyền authorization bằng input.authorization
+     * - Một số route truyền qua input.headers.authorization
+     */
     if (input.headers) {
       Object.assign(headers, input.headers);
     }
-    const response = await fetch(
-      `${this.serviceUrl(input.service)}${input.path}`,
-      {
-        method: input.method,
-        headers,
-        body: input.body === undefined ? undefined : JSON.stringify(input.body),
-      },
-    );
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+
+    if (input.authorization) {
+      headers.authorization = input.authorization;
+    }
+
+    const url = this.buildUrl({
+      service: input.service,
+      path: input.path,
+      query: input.query,
+    });
+
+    const response = await fetch(url, {
+      method: input.method,
+      headers,
+      body: input.body === undefined ? undefined : JSON.stringify(input.body),
+    });
+
     return this.parseResponse(response);
   }
 
@@ -64,6 +102,7 @@ export class GatewayService {
     fields: Record<string, string | undefined>;
   }) {
     const formData = new FormData();
+
     formData.append(
       'file',
       new Blob([input.file.buffer as unknown as BlobPart], {
@@ -71,11 +110,13 @@ export class GatewayService {
       }),
       input.file.originalname,
     );
+
     for (const [key, value] of Object.entries(input.fields)) {
       if (value !== undefined && value !== null) {
         formData.append(key, value);
       }
     }
+
     const response = await fetch(
       `${this.serviceUrl(input.service)}${input.path}`,
       {
@@ -83,7 +124,7 @@ export class GatewayService {
         body: formData,
       },
     );
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+
     return this.parseResponse(response);
   }
 
@@ -94,12 +135,20 @@ export class GatewayService {
   }) {
     const response = await fetch(
       `${this.serviceUrl(input.service)}${input.path}`,
-      { method: input.method },
+      {
+        method: input.method,
+        headers: {
+          'cache-control': 'no-store',
+          pragma: 'no-cache',
+        },
+      },
     );
+
     if (!response.ok) {
       const errorText = await response.text();
       throw new HttpException(errorText, response.status);
     }
+
     return {
       buffer: Buffer.from(await response.arrayBuffer()),
       contentType:
@@ -110,14 +159,29 @@ export class GatewayService {
 
   private async parseResponse(response: Response) {
     const contentType = response.headers.get('content-type') || '';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const data = contentType.includes('application/json')
-      ? await response.json()
-      : await response.text();
-    if (!response.ok) {
-      throw new HttpException(data, response.status);
+    const text = await response.text();
+
+    let data: string | Record<string, any> | null = null;
+
+    if (text) {
+      if (contentType.includes('application/json')) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          data = JSON.parse(text);
+        } catch {
+          data = {
+            message: text,
+          };
+        }
+      } else {
+        data = text;
+      }
     }
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+
+    if (!response.ok) {
+      throw new HttpException(data ?? '', response.status);
+    }
+
     return data;
   }
 }
