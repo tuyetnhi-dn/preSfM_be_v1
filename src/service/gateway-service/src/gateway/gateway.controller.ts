@@ -223,6 +223,18 @@ export class GatewayController {
       method: 'GET',
     });
   }
+  @Get('projects/:projectId/ply-viewer-assets')
+  getProjectPlyViewerAssets(
+    @Param('projectId') projectId: string,
+    @Headers('authorization') authorization: string | undefined,
+  ) {
+    return this.gatewayService.jsonRequest({
+      service: 'video',
+      path: `/projects/${projectId}/ply-viewer-assets`,
+      method: 'GET',
+      authorization,
+    });
+  }
   @Get('projects')
   listProjects(@Query() query: Record<string, unknown>) {
     const searchParams = new URLSearchParams();

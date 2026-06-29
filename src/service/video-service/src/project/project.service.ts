@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   BadRequestException,
@@ -11,6 +16,10 @@ import type {
   ProjectListItemDto,
   ProjectListQuery,
 } from './project-list.type';
+import {
+  buildShotViewpointMap,
+  normalizeFrameName,
+} from './helpers/opensfm-viewpoint.helper';
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 12;
@@ -49,6 +58,107 @@ function buildSupabasePublicUrl(input: {
     .join('/');
 
   return `${baseUrl}/storage/v1/object/public/${input.bucket}/${encodedObjectPath}`;
+}
+
+function publicApiBaseUrl() {
+  return (
+    process.env.PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    'http://localhost:8000/api'
+  ).replace(/\/$/, '');
+}
+
+function internalApiBaseUrl() {
+  return (
+    process.env.INTERNAL_API_URL ??
+    process.env.PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    'http://localhost:8000/api'
+  ).replace(/\/$/, '');
+}
+
+function storageDownloadUrl(fileId?: string | null) {
+  if (!fileId) return null;
+
+  return `${publicApiBaseUrl()}/storage/files/${fileId}/download`;
+}
+
+function internalStorageDownloadUrl(fileId?: string | null) {
+  if (!fileId) return null;
+
+  return `${internalApiBaseUrl()}/storage/files/${fileId}/download`;
+}
+
+async function fetchJsonFromDownloadUrl(fileId?: string | null) {
+  if (!fileId) return null;
+
+  const url = internalStorageDownloadUrl(fileId);
+
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.warn(
+        `[ProjectService] Failed to fetch JSON file ${fileId}: ${response.status} ${response.statusText}`,
+      );
+      return null;
+    }
+
+    return response.json();
+  } catch (error) {
+    console.warn(`[ProjectService] Failed to fetch JSON file ${fileId}`, error);
+    return null;
+  }
+}
+function basename(value?: string | null) {
+  if (!value) return null;
+
+  return value.replace(/\\/g, '/').split('/').pop() ?? null;
+}
+
+function pickFrameName(row: any, prefix: 'raw' | 'processed' | 'mask') {
+  return (
+    row?.[`${prefix}OriginalName`] ??
+    basename(row?.[`${prefix}ObjectPath`]) ??
+    basename(row?.[`${prefix}Path`]) ??
+    null
+  );
+}
+function findViewpoint(
+  viewpointMap: Map<string, any>,
+  names: Array<string | null | undefined>,
+) {
+  for (const name of names) {
+    const normalizedName = normalizeFrameName(name);
+
+    if (!normalizedName) continue;
+
+    const direct = viewpointMap.get(normalizedName);
+
+    if (direct) {
+      return direct;
+    }
+
+    const nameWithoutExt = normalizedName.replace(/\.[^.]+$/, '');
+
+    const candidates = [
+      `${nameWithoutExt}.jpg`,
+      `${nameWithoutExt}.jpeg`,
+      `${nameWithoutExt}.png`,
+    ];
+
+    for (const candidate of candidates) {
+      const viewpoint = viewpointMap.get(candidate);
+
+      if (viewpoint) {
+        return viewpoint;
+      }
+    }
+  }
+
+  return null;
 }
 
 @Injectable()
@@ -403,6 +513,243 @@ LEFT JOIN LATERAL (
         visibility: updateResult.rows[0].visibility,
         updatedAt: updateResult.rows[0].updatedAt,
       },
+    };
+  }
+  async getProjectPlyViewerAssets(projectId: string) {
+    const pipelineRows = await this.databaseService.query(
+      `
+      SELECT
+        pr.id AS "pipelineRunId",
+        COALESCE(pr.dataset_id, d.id) AS "datasetId",
+        pr.video_id AS "videoId",
+        pr.result AS "result",
+
+        er.raw_opensfm_run_id AS "rawOpenSfMRunId",
+        er.processed_opensfm_run_id AS "processedOpenSfMRunId",
+
+        raw_run.reconstruction_file_id AS "rawReconstructionFileId",
+        COALESCE(raw_run.dense_ply_file_id, raw_run.sparse_ply_file_id) AS "rawPlyFileId",
+
+        processed_run.reconstruction_file_id AS "processedReconstructionFileId",
+        COALESCE(processed_run.dense_ply_file_id, processed_run.sparse_ply_file_id) AS "processedPlyFileId"
+
+      FROM pipeline_runs pr
+      LEFT JOIN datasets d
+        ON d.id = pr.dataset_id
+      LEFT JOIN evaluation_results er
+        ON er.pipeline_run_id = pr.id
+      LEFT JOIN opensfm_runs raw_run
+        ON raw_run.id = er.raw_opensfm_run_id
+      LEFT JOIN opensfm_runs processed_run
+        ON processed_run.id = er.processed_opensfm_run_id
+
+      WHERE
+        (
+          pr.project_id = $1
+          OR d.project_id = $1
+        )
+        AND LOWER(pr.status::text) = 'completed'
+
+      ORDER BY pr.completed_at DESC NULLS LAST, pr.created_at DESC
+      LIMIT 1
+    `,
+      [projectId],
+    );
+
+    const pipeline = pipelineRows.rows[0];
+
+    if (!pipeline) {
+      return {
+        video: null,
+        pointClouds: {
+          rawPlyUrl: null,
+          processedPlyUrl: null,
+          rawPlyFileId: null,
+          processedPlyFileId: null,
+          rawReconstructionFileId: null,
+          processedReconstructionFileId: null,
+        },
+        frames: [],
+        message: 'No completed pipeline run found for this project.',
+      };
+    }
+
+    const result =
+      typeof pipeline.result === 'string'
+        ? JSON.parse(pipeline.result)
+        : (pipeline.result ?? {});
+
+    const rawPlyFileId =
+      pipeline.rawPlyFileId ?? result?.rawFlow?.ply?.id ?? null;
+
+    const processedPlyFileId =
+      pipeline.processedPlyFileId ?? result?.processedFlow?.ply?.id ?? null;
+
+    const rawReconstructionFileId =
+      pipeline.rawReconstructionFileId ??
+      result?.rawFlow?.reconstruction?.id ??
+      null;
+
+    const processedReconstructionFileId =
+      pipeline.processedReconstructionFileId ??
+      result?.processedFlow?.reconstruction?.id ??
+      null;
+
+    const rawReconstruction = rawReconstructionFileId
+      ? await fetchJsonFromDownloadUrl(String(rawReconstructionFileId))
+      : null;
+
+    const processedReconstruction = processedReconstructionFileId
+      ? await fetchJsonFromDownloadUrl(String(processedReconstructionFileId))
+      : null;
+
+    const rawViewpoints = buildShotViewpointMap(rawReconstruction);
+    const processedViewpoints = buildShotViewpointMap(processedReconstruction);
+
+    const videoRows = await this.databaseService.query(
+      `
+      SELECT
+        v.id,
+        v.original_name AS "originalName",
+        v.duration_ms AS "durationMs",
+        v.fps,
+        v.width,
+        v.height,
+        sf.id AS "storageFileId"
+      FROM videos v
+      LEFT JOIN storage_files sf
+        ON sf.id = v.storage_file_id
+      WHERE v.id = $1
+      LIMIT 1
+    `,
+      [pipeline.videoId],
+    );
+
+    const videoRow = videoRows.rows[0] ?? null;
+
+    const frameRows = await this.databaseService.query(
+      `
+      SELECT
+        f.id,
+        f.frame_index AS "frameIndex",
+        f.timestamp_ms AS "timestampMs",
+
+        raw_sf.id AS "rawFileId",
+        raw_sf.original_name AS "rawOriginalName",
+        raw_sf.object_path AS "rawObjectPath",
+
+        processed_sf.id AS "processedFileId",
+        processed_sf.original_name AS "processedOriginalName",
+        processed_sf.object_path AS "processedObjectPath",
+
+        mask_sf.id AS "maskFileId",
+        mask_sf.original_name AS "maskOriginalName",
+        mask_sf.object_path AS "maskObjectPath"
+
+      FROM frames f
+      LEFT JOIN storage_files raw_sf
+        ON raw_sf.id = f.raw_storage_file_id
+      LEFT JOIN storage_files processed_sf
+        ON processed_sf.id = f.processed_storage_file_id
+      LEFT JOIN storage_files mask_sf
+        ON mask_sf.id = f.mask_storage_file_id
+      WHERE f.dataset_id = $1
+        AND f.is_selected = true
+      ORDER BY f.frame_index ASC
+    `,
+      [pipeline.datasetId],
+    );
+
+    const allFrames = frameRows.rows.map((row: any) => {
+      const frameIndex = Number(row.frameIndex);
+
+      const fallbackFrameName = `frame_${String(frameIndex + 1).padStart(
+        6,
+        '0',
+      )}.jpg`;
+
+      const rawFrameName = pickFrameName(row, 'raw') ?? fallbackFrameName;
+
+      const processedFrameName =
+        pickFrameName(row, 'processed') ?? rawFrameName ?? fallbackFrameName;
+
+      const maskFrameName = pickFrameName(row, 'mask');
+
+      const rawViewpoint = findViewpoint(rawViewpoints, [
+        rawFrameName,
+        processedFrameName,
+        maskFrameName,
+        fallbackFrameName,
+      ]);
+
+      const processedViewpoint = findViewpoint(processedViewpoints, [
+        processedFrameName,
+        rawFrameName,
+        maskFrameName,
+        fallbackFrameName,
+      ]);
+
+      return {
+        frameId: row.id,
+        frameIndex,
+        frameName: rawFrameName,
+        timestampMs: Number(row.timestampMs),
+        rawImageUrl: storageDownloadUrl(row.rawFileId),
+        processedImageUrl: storageDownloadUrl(row.processedFileId),
+        maskUrl: storageDownloadUrl(row.maskFileId),
+        rawViewpoint,
+        processedViewpoint,
+        hasRawViewpoint: Boolean(rawViewpoint),
+        hasProcessedViewpoint: Boolean(processedViewpoint),
+      };
+    });
+
+    const frames = allFrames.filter(
+      (frame) => frame.rawViewpoint && frame.processedViewpoint,
+    );
+
+    return {
+      video: videoRow
+        ? {
+            id: videoRow.id,
+            url: storageDownloadUrl(videoRow.storageFileId),
+            fps:
+              videoRow.fps === null || videoRow.fps === undefined
+                ? null
+                : Number(videoRow.fps),
+            durationMs:
+              videoRow.durationMs === null || videoRow.durationMs === undefined
+                ? null
+                : Number(videoRow.durationMs),
+            width:
+              videoRow.width === null || videoRow.width === undefined
+                ? null
+                : Number(videoRow.width),
+            height:
+              videoRow.height === null || videoRow.height === undefined
+                ? null
+                : Number(videoRow.height),
+            originalName: videoRow.originalName ?? null,
+          }
+        : null,
+
+      pointClouds: {
+        rawPlyUrl: storageDownloadUrl(rawPlyFileId),
+        processedPlyUrl: storageDownloadUrl(processedPlyFileId),
+        rawPlyFileId,
+        processedPlyFileId,
+        rawReconstructionFileId,
+        processedReconstructionFileId,
+      },
+
+      frameStats: {
+        totalSelectedFrames: allFrames.length,
+        syncedFrames: frames.length,
+        rawShotCount: rawViewpoints.size,
+        processedShotCount: processedViewpoints.size,
+      },
+
+      frames,
     };
   }
 }

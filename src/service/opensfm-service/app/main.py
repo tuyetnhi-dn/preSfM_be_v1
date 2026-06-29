@@ -56,6 +56,8 @@ def compare_opensfm(input_data: CompareOpenSfMInput):
         processed_ply_upload = None
         raw_report_upload = None
         processed_report_upload = None
+        raw_reconstruction_upload = None
+        processed_reconstruction_upload = None
 
         if raw_metrics["plyPath"]:
             raw_ply_upload = upload_file(
@@ -88,6 +90,21 @@ def compare_opensfm(input_data: CompareOpenSfMInput):
                 f"datasets/{input_data.datasetId}/videos/{input_data.videoId}/opensfm/{compare_run_id}/processed_report.pdf",
                 input_data.datasetId,
             )
+        if raw_metrics.get("reconstructionPath"):
+            raw_reconstruction_upload = upload_file(
+                raw_metrics["reconstructionPath"],
+                DEFAULT_BUCKET,
+                f"datasets/{input_data.datasetId}/videos/{input_data.videoId}/opensfm/{compare_run_id}/raw_reconstruction.json",
+                input_data.datasetId,
+            )
+
+        if processed_metrics.get("reconstructionPath"):
+            processed_reconstruction_upload = upload_file(
+                processed_metrics["reconstructionPath"],
+                DEFAULT_BUCKET,
+                f"datasets/{input_data.datasetId}/videos/{input_data.videoId}/opensfm/{compare_run_id}/processed_reconstruction.json",
+                input_data.datasetId,
+            )
 
         return {
             "compareRunId": compare_run_id,
@@ -97,6 +114,7 @@ def compare_opensfm(input_data: CompareOpenSfMInput):
                 "imageCount": len(input_data.rawImages),
                 "ply": raw_ply_upload,
                 "report": raw_report_upload,
+                "reconstruction": raw_reconstruction_upload,
                 "metrics": raw_metrics,
             },
             "processedFlow": {
@@ -105,6 +123,7 @@ def compare_opensfm(input_data: CompareOpenSfMInput):
                 "imageCount": len(input_data.processedPairs),
                 "ply": processed_ply_upload,
                 "report": processed_report_upload,
+                "reconstruction": processed_reconstruction_upload,
                 "metrics": processed_metrics,
             },
             "comparison": comparison,

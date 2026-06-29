@@ -41,6 +41,10 @@ export class ProjectController {
   listProjects(@Query() query: ProjectListQuery) {
     return this.projectService.listProjects(query);
   }
+  @Get(':id/ply-viewer-assets')
+  getProjectPlyViewerAssets(@Param('id') id: string) {
+    return this.projectService.getProjectPlyViewerAssets(id);
+  }
 
   @Get(':id')
   getProjectofUserById(

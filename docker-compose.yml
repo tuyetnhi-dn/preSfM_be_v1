@@ -110,6 +110,8 @@ services:
       MASK_GENERATION_SERVICE_URL: http://mask-generation-service:8002
       VIDEO_BUCKET: ${VIDEO_BUCKET:-videos}
       OPENSFM_SERVICE_URL: http://opensfm-service:8005
+      INTERNAL_API_URL: http://gateway-service:8000/api
+      PUBLIC_API_URL: http://localhost:8000/api
     ports:
       - '8003:8003'
     depends_on:

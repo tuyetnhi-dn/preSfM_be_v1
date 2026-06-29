@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 type AssetFile = {
@@ -100,7 +101,19 @@ export class OpenSfMComparisonService {
       );
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const payload = await response.json();
+    console.log('OpenSfM compare response keys:', Object.keys(payload ?? {}));
+    console.log(
+      'Raw reconstruction exists:',
+      Boolean(payload?.rawFlow?.reconstruction),
+    );
+    console.log(
+      'Processed reconstruction exists:',
+      Boolean(payload?.processedFlow?.reconstruction),
+    );
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    return response.json();
+    return payload;
   }
 }
