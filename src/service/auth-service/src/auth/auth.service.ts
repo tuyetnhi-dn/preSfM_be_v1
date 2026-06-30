@@ -46,6 +46,9 @@ export class AuthService {
    */
   async sendOtp(body: { email?: string }) {
     const email = this.normalizeEmail(body.email);
+
+    await this.ensureEmailNotUsed(email);
+
     const otp = this.generateOtp();
     const otpHash = this.hashOtp(otp);
     const expiresMinutes = Number(process.env.OTP_EXPIRES_MINUTES ?? 10);
@@ -94,6 +97,8 @@ export class AuthService {
         'Password must be at least 8 characters long',
       );
     }
+
+    await this.ensureEmailNotUsed(email);
 
     // Bước 1: Verify OTP từ DB
     await this.verifyOtp(email, otp);
@@ -286,6 +291,17 @@ export class AuthService {
   }
 
   // ─── Private: OTP helpers ────────────────────────────────────────────────────
+
+  private async ensureEmailNotUsed(email: string): Promise<void> {
+    const result = await this.databaseService.query(
+      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+      [email],
+    );
+
+    if (result.rows.length > 0) {
+      throw new BadRequestException('Email has already been used');
+    }
+  }
 
   /** Tạo OTP 6 chữ số ngẫu nhiên */
   private generateOtp(): string {
